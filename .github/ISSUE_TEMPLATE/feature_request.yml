@@ -1,0 +1,29 @@
+name: Feature request
+description: Propose an improvement to the open-source, local-first editor.
+title: '[Feature]: '
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the workflow rather than only the interface.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: principles
+    attributes:
+      label: Project direction
+      options:
+        - label: This can work locally without requiring an account or hosted service.
+          required: true

@@ -1,0 +1,7 @@
+dist
+coverage
+output
+test-results
+playwright-report
+blob-report
+pnpm-lock.yaml

@@ -1,0 +1,35 @@
+{
+  "name": "@scrawl/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fontsource/caveat": "^5.3.0",
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@fontsource/kalam": "^5.3.0",
+    "@fontsource/space-grotesk": "^5.3.0",
+    "@scrawl/editor": "workspace:*",
+    "@scrawl/engine": "workspace:*",
+    "@scrawl/interchange": "workspace:*",
+    "@scrawl/schema": "workspace:*",
+    "@scrawl/storage": "workspace:*",
+    "@tabler/icons-react": "^3.46.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "zustand": "^5.0.8"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^4.4.0",
+    "typescript": "^5.9.3",
+    "vite": "^6.3.0"
+  }
+}

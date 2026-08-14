@@ -1,0 +1,50 @@
+name: Bug report
+description: Report a reproducible problem in Scrawl.
+title: '[Bug]: '
+labels: [bug]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the behavior and its impact.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1. Open...
+        2. Select...
+        3. Observe...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and operating system
+      placeholder: Chrome 151 on macOS 15
+    validations:
+      required: true
+  - type: dropdown
+    id: data-risk
+    attributes:
+      label: Did this cause data loss or file corruption?
+      options:
+        - 'No'
+        - 'Possibly'
+        - 'Yes'
+    validations:
+      required: true
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Attach a screenshot or a minimal non-sensitive `.scrawl` file when useful.
