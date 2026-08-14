@@ -26,6 +26,27 @@ describe('editor store', () => {
     expect(getActivePage(store.getState().document).elements[0]?.id).toBe(rectangle.id);
   });
 
+  it('can insert an element without selecting it or leaving the active tool', () => {
+    const store = createEditorStore();
+    const stroke = createElement('freedraw', {
+      x: 20,
+      y: 30,
+      points: [
+        { x: 0, y: 0 },
+        { x: 40, y: 25 },
+      ],
+    });
+    const actions = store.getState().actions;
+
+    actions.setTool('freedraw');
+    actions.addElement(stroke, { selectAfterInsert: false });
+
+    expect(getActivePage(store.getState().document).elements[0]?.id).toBe(stroke.id);
+    expect(store.getState().view.tool).toBe('freedraw');
+    expect(store.getState().view.selectedIds).toEqual([]);
+    expect(store.getState().history.past).toHaveLength(1);
+  });
+
   it('records a drag preview as one history entry', () => {
     const document = createDocument();
     const rectangle = createElement('rectangle', {

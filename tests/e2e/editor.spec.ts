@@ -136,3 +136,36 @@ test('TC-E2E-004: a malformed import cannot replace the current document', async
   await page.getByRole('button', { name: 'Close', exact: true }).click();
   await expect(title).toHaveValue('Keep this document');
 });
+
+test('TC-E2E-006: freehand drawing stays active until the user exits the tool', async ({
+  page,
+}) => {
+  const canvas = await drawingCanvas(page);
+  const drawTool = page.getByRole('button', { name: 'Draw (P)' });
+  const selectTool = page.getByRole('button', { name: 'Select (V)' });
+
+  await drawTool.click();
+  await dragOnCanvas(page, canvas, { x: 220, y: 180 }, { x: 320, y: 240 });
+  await dragOnCanvas(page, canvas, { x: 340, y: 260 }, { x: 430, y: 190 });
+
+  await expect(drawTool).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByText('No objects selected.')).toBeAttached();
+  await expect
+    .poll(async () => (await latestDocument(page))?.pages[0]?.elements.map(({ type }) => type))
+    .toEqual(['freedraw', 'freedraw']);
+
+  await page.getByRole('button', { name: 'Undo' }).click();
+  await expect.poll(async () => (await latestDocument(page))?.pages[0]?.elements.length).toBe(1);
+  await expect(drawTool).toHaveAttribute('aria-pressed', 'true');
+
+  await page.keyboard.press('v');
+  await expect(selectTool).toHaveAttribute('aria-pressed', 'true');
+
+  await drawTool.click();
+  await page.keyboard.press('Escape');
+  await expect(selectTool).toHaveAttribute('aria-pressed', 'true');
+
+  await drawTool.click();
+  await selectTool.click();
+  await expect(selectTool).toHaveAttribute('aria-pressed', 'true');
+});

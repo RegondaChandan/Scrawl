@@ -56,6 +56,10 @@ interface HistoryState {
   checkpoint: ScrawlDocument | null;
 }
 
+export interface AddElementOptions {
+  selectAfterInsert?: boolean;
+}
+
 export interface EditorActions {
   loadDocument: (document: unknown) => void;
   setTitle: (title: string) => void;
@@ -65,7 +69,7 @@ export interface EditorActions {
   setEditingId: (id: string | null) => void;
   setOpenPanel: (panel: OpenPanel) => void;
   updateSettings: (settings: Partial<DocumentSettings>) => void;
-  addElement: (element: AnyElement) => void;
+  addElement: (element: AnyElement, options?: AddElementOptions) => void;
   insertElements: (elements: AnyElement[]) => void;
   addImage: (asset: ScrawlAsset, element: AnyElement) => void;
   updateElements: (ids: Iterable<string>, update: (element: AnyElement) => AnyElement) => void;
@@ -197,9 +201,17 @@ export function createEditorStore(initialDocument: ScrawlDocument = createDocume
           },
         }));
       },
-      addElement(element) {
+      addElement(element, options) {
         commit((current) => appendElement(current, element));
-        set({ view: { ...get().view, selectedIds: [element.id], tool: 'select' } });
+        const view = get().view;
+        const selectAfterInsert = options?.selectAfterInsert ?? true;
+        set({
+          view: {
+            ...view,
+            selectedIds: selectAfterInsert ? [element.id] : [],
+            tool: selectAfterInsert ? 'select' : view.tool,
+          },
+        });
       },
       insertElements(elements) {
         if (elements.length === 0) return;

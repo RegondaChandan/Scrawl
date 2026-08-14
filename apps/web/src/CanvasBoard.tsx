@@ -813,7 +813,10 @@ export function CanvasBoard(): React.JSX.Element {
           element.type === 'line' || element.type === 'arrow'
             ? bindConnectorEndpoints(element, elements, 10 / camera.zoom)
             : element;
-        actions.addElement(next);
+        actions.addElement(
+          next,
+          element.type === 'freedraw' ? { selectAfterInsert: false } : undefined,
+        );
       }
       setDraft(null);
     }
