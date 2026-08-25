@@ -4,17 +4,111 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#f3efe4" />
+    <meta name="robots" content="index, follow" />
     <meta
       name="description"
-      content="Scrawl is a local-first open-source canvas for diagrams and visual thinking."
+      content="Scrawl is a free, open-source, local-first visual canvas for diagrams, whiteboards, sketches, and visual thinking."
     />
+    <link rel="canonical" href="https://scrawl.design/" />
     <link rel="icon" href="/scrawl-logo-192.png" sizes="192x192" type="image/png" />
     <link rel="apple-touch-icon" href="/scrawl-logo-192.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
-    <title>Scrawl — local-first visual canvas</title>
+    <link rel="sitemap" type="application/xml" href="/sitemap.xml" />
+
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Scrawl" />
+    <meta property="og:url" content="https://scrawl.design/" />
+    <meta property="og:title" content="Scrawl — Free Local-First Visual Canvas" />
+    <meta
+      property="og:description"
+      content="Create diagrams, whiteboards, sketches, and visual notes in a private, local-first canvas. Free and open source."
+    />
+    <meta property="og:image" content="https://scrawl.design/scrawl-social-card.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="Scrawl local-first visual canvas with hand-drawn diagram elements"
+    />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Scrawl — Free Local-First Visual Canvas" />
+    <meta
+      name="twitter:description"
+      content="Create diagrams, whiteboards, sketches, and visual notes in a private, local-first canvas."
+    />
+    <meta name="twitter:image" content="https://scrawl.design/scrawl-social-card.png" />
+    <meta
+      name="twitter:image:alt"
+      content="Scrawl local-first visual canvas with hand-drawn diagram elements"
+    />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "Organization",
+            "@id": "https://scrawl.design/#organization",
+            "name": "Scrawl",
+            "url": "https://scrawl.design/",
+            "logo": {
+              "@type": "ImageObject",
+              "url": "https://scrawl.design/scrawl-logo-512.png",
+              "width": 512,
+              "height": 512
+            },
+            "sameAs": ["https://github.com/RegondaChandan/Scrawl"]
+          },
+          {
+            "@type": "WebSite",
+            "@id": "https://scrawl.design/#website",
+            "url": "https://scrawl.design/",
+            "name": "Scrawl",
+            "description": "A free, open-source, local-first visual canvas for diagrams, whiteboards, sketches, and visual thinking.",
+            "inLanguage": "en",
+            "publisher": {
+              "@id": "https://scrawl.design/#organization"
+            }
+          },
+          {
+            "@type": "WebApplication",
+            "@id": "https://scrawl.design/#application",
+            "name": "Scrawl",
+            "url": "https://scrawl.design/",
+            "applicationCategory": "DesignApplication",
+            "operatingSystem": "Any",
+            "browserRequirements": "Requires JavaScript and a modern web browser.",
+            "description": "Create editable diagrams, whiteboards, sketches, and visual notes in a private, local-first browser canvas.",
+            "image": "https://scrawl.design/scrawl-logo-512.png",
+            "isAccessibleForFree": true,
+            "author": {
+              "@id": "https://scrawl.design/#organization"
+            },
+            "offers": {
+              "@type": "Offer",
+              "price": "0",
+              "priceCurrency": "USD"
+            },
+            "featureList": [
+              "Editable vector diagrams and freehand drawing",
+              "Precise and hand-drawn rendering styles",
+              "Local-first autosave and offline support",
+              "Open Scrawl document format",
+              "SVG, PNG, and PDF export",
+              "draw.io import"
+            ]
+          }
+        ]
+      }
+    </script>
+
+    <title>Scrawl — Free Local-First Visual Canvas</title>
   </head>
   <body>
     <div id="root"></div>
+    <noscript>Scrawl requires JavaScript to run the visual canvas editor.</noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
