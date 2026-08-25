@@ -1,4 +1,4 @@
-import type { AnyElement, Box, LinearElement, Point, Theme } from '@scrawl/schema';
+import type { AnyElement, Box, LinearElement, Point, SketchStyle, Theme } from '@scrawl/schema';
 import { isLinear } from '@scrawl/schema';
 import { CrispRenderer } from './crisp';
 import { RoughRenderer } from './rough';
@@ -27,7 +27,7 @@ export function rendererFor(el: AnyElement): Renderer {
 }
 
 export { CANVAS_COLORS, GRID_COLORS } from '@scrawl/schema';
-import { CANVAS_COLORS, GRID_COLORS } from '@scrawl/schema';
+import { canvasThemeForColor, CANVAS_COLORS, GRID_COLORS, isCanvasColor } from '@scrawl/schema';
 
 export const ACCENT = '#12afa6';
 export const GRID_SIZE = 20;
@@ -173,6 +173,8 @@ export interface SceneOpts {
   elements: AnyElement[];
   camera: Camera;
   theme: Theme;
+  canvasColor?: string;
+  sketchStyle?: SketchStyle;
   selectedIds: string[];
   editingId?: string | null;
   marquee?: Box | null;
@@ -189,6 +191,8 @@ export function renderScene(opts: SceneOpts): void {
     elements,
     camera,
     theme,
+    canvasColor: requestedCanvasColor = CANVAS_COLORS[theme],
+    sketchStyle = 'pencil',
     selectedIds,
     editingId = null,
     marquee = null,
@@ -198,6 +202,10 @@ export function renderScene(opts: SceneOpts): void {
     dpr = 1,
     resolveAsset,
   } = opts;
+  const canvasColor = isCanvasColor(requestedCanvasColor)
+    ? requestedCanvasColor
+    : CANVAS_COLORS[theme];
+  const canvasTheme = canvasThemeForColor(canvasColor, theme);
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
   const cssW = canvas.width / dpr;
@@ -206,17 +214,19 @@ export function renderScene(opts: SceneOpts): void {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, cssW, cssH);
   if (backgroundOn) {
-    ctx.fillStyle = CANVAS_COLORS[theme];
+    ctx.fillStyle = canvasColor;
     ctx.fillRect(0, 0, cssW, cssH);
   }
 
   ctx.translate(camera.x, camera.y);
   ctx.scale(camera.zoom, camera.zoom);
 
-  if (gridOn) drawGrid(ctx, camera, cssW, cssH, theme);
+  if (gridOn) drawGrid(ctx, camera, cssW, cssH, canvasTheme);
 
   const renderOpts = {
-    theme,
+    theme: canvasTheme,
+    canvasColor,
+    sketchStyle,
     editingId,
     ...(resolveAsset === undefined ? {} : { resolveAsset }),
   };
@@ -226,7 +236,7 @@ export function renderScene(opts: SceneOpts): void {
 
   drawSnapGuides(ctx, guides, camera.zoom);
 
-  drawSelection(ctx, elements, selectedIds, camera, theme, editingId);
+  drawSelection(ctx, elements, selectedIds, camera, canvasTheme, editingId);
 
   if (marquee) {
     ctx.fillStyle = 'rgba(79, 93, 255, 0.08)';
@@ -406,6 +416,8 @@ export function exportToCanvas(
     scale?: number;
     padding?: number;
     theme?: Theme;
+    canvasColor?: string;
+    sketchStyle?: SketchStyle;
     background?: boolean;
     grid?: boolean;
     resolveAsset?: AssetSourceResolver;
@@ -415,6 +427,8 @@ export function exportToCanvas(
     scale = 2,
     padding = 24,
     theme = 'light',
+    canvasColor = CANVAS_COLORS[theme],
+    sketchStyle = 'pencil',
     background = true,
     grid = false,
     resolveAsset,
@@ -440,6 +454,8 @@ export function exportToCanvas(
       zoom: effectiveScale,
     },
     theme,
+    canvasColor,
+    sketchStyle,
     selectedIds: [],
     gridOn: grid,
     backgroundOn: background,

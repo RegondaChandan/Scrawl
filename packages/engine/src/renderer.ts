@@ -6,8 +6,15 @@ import type {
   StickyElement,
   TextElement,
   Theme,
+  SketchStyle,
 } from '@scrawl/schema';
-import { CANVAS_COLORS, LABEL_FONT_SIZE, LINE_HEIGHT, themedColor } from '@scrawl/schema';
+import {
+  CANVAS_COLORS,
+  isCanvasColor,
+  LABEL_FONT_SIZE,
+  LINE_HEIGHT,
+  themedColor,
+} from '@scrawl/schema';
 import {
   getElementBounds,
   getFreedrawPath,
@@ -20,6 +27,8 @@ import { getImageForAsset, type AssetSourceResolver } from './images';
 
 export interface RenderOpts {
   theme: Theme;
+  canvasColor?: string;
+  sketchStyle?: SketchStyle;
   editingId?: string | null;
   resolveAsset?: AssetSourceResolver;
 }
@@ -121,7 +130,7 @@ export abstract class BaseRenderer implements Renderer {
     const cx = el.x + mid.x;
     const cy = el.y + mid.y;
     ctx.save();
-    ctx.fillStyle = CANVAS_COLORS[opts.theme];
+    ctx.fillStyle = isCanvasColor(opts.canvasColor) ? opts.canvasColor : CANVAS_COLORS[opts.theme];
     ctx.fillRect(cx - width / 2 - 5, cy - height / 2 - 3, width + 10, height + 6);
     ctx.fillStyle = themedColor(el.strokeColor, opts.theme);
     for (let i = 0; i < lines.length; i++) {

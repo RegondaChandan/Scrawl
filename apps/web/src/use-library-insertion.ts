@@ -1,12 +1,12 @@
 import { useCallback } from 'react';
-import { screenToWorld, type LibraryItem } from '@scrawl/engine';
+import { screenToWorld, type IconDef, type LibraryItem } from '@scrawl/engine';
 import {
   getActivePage,
   instantiateLibraryItem,
   instantiateTemplateElements,
   type DiagramTemplate,
 } from '@scrawl/editor';
-import { maxOrder, type AnyElement } from '@scrawl/schema';
+import { createElement, maxOrder, type AnyElement } from '@scrawl/schema';
 import { useEditor } from './use-editor';
 
 function visibleCanvasCenter(): { x: number; y: number } {
@@ -16,6 +16,7 @@ function visibleCanvasCenter(): { x: number; y: number } {
 
 export function useLibraryInsertion(): {
   insertShape: (item: LibraryItem) => void;
+  insertIcon: (icon: IconDef) => void;
   insertTemplate: (template: Pick<DiagramTemplate, 'elements'>, preserveStyle?: boolean) => void;
 } {
   const document = useEditor((state) => state.document);
@@ -63,5 +64,27 @@ export function useLibraryInsertion(): {
     [actions, document, targetCenter, view.activeLayerId],
   );
 
-  return { insertShape, insertTemplate };
+  const insertIcon = useCallback(
+    (icon: IconDef): void => {
+      const page = getActivePage(document);
+      const center = targetCenter();
+      actions.addElement(
+        createElement('icon', {
+          x: center.x - 42,
+          y: center.y - 42,
+          width: 84,
+          height: 84,
+          iconId: icon.id,
+          layerId: view.activeLayerId,
+          order: maxOrder(page.elements) + 1,
+          renderStyle: document.settings.mode,
+          ...document.settings.defaults,
+        }),
+      );
+      actions.setOpenPanel(null);
+    },
+    [actions, document, targetCenter, view.activeLayerId],
+  );
+
+  return { insertShape, insertIcon, insertTemplate };
 }

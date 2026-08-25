@@ -6,11 +6,14 @@ import {
   boxesIntersect,
   getConnectorHandles,
   getElementBounds,
+  findLibraryItem,
+  getIconDef,
   getSceneBounds,
   getSelectionBounds,
   getSelectionHandles,
   getSelectionOutline,
   normalizeAngle,
+  measureTextSize,
   renderScene,
   RESIZE_HANDLE_SIZE,
   rendererFor,
@@ -23,9 +26,12 @@ import {
   type TransformHandleId,
 } from '@scrawl/engine';
 import {
+  CANVAS_COLORS,
   createElement,
-  maxOrder,
   isLinear,
+  LINE_HEIGHT,
+  MAX_ELEMENT_TEXT_LENGTH,
+  maxOrder,
   type AnyElement,
   type Box,
   type ElementType,
@@ -35,9 +41,10 @@ import {
   expandGroupedSelection,
   getActivePage,
   insertConnectorWaypoint,
+  instantiateLibraryItem,
   moveConnectorSegment,
   moveConnectorVertex,
-  parseClipboardElements,
+  parseClipboardContent,
   resizeBoxFromHandle,
   resizeElementsInFrame,
   rotateElements,
@@ -48,8 +55,13 @@ import {
   snapSelectionMove,
   snapSelectionMoveToGrid,
   type ResizeHandle,
+  type ScrawlClipboardPayload,
   type Tool,
 } from '@scrawl/editor';
+import { readCanvasLibraryTransfer, SCRAWL_LIBRARY_TRANSFER_TYPE } from './canvas-transfer';
+import { eraserSegmentPoints } from './eraser';
+import { imageInsertionError, imageInsertionFailureMessage, prepareImageFile } from './image-files';
+import { drawLaserTrail, trimLaserTrail, type LaserPoint } from './laser';
 import { useEditor } from './use-editor';
 import { TextOverlay } from './TextOverlay';
 import { ContextualRadialMenu } from './components/ContextualRadialMenu';
@@ -78,6 +90,18 @@ interface DrawInteraction {
   kind: 'draw';
   startWorld: Point;
   element: AnyElement;
+}
+
+interface EraseInteraction {
+  kind: 'erase';
+  source: AnyElement[];
+  candidates: AnyElement[];
+  erasedIds: Set<string>;
+  lastWorld: Point;
+}
+
+interface LaserInteraction {
+  kind: 'laser';
 }
 
 interface ResizeInteraction {
@@ -111,6 +135,8 @@ type Interaction =
   | MoveInteraction
   | MarqueeInteraction
   | DrawInteraction
+  | EraseInteraction
+  | LaserInteraction
   | ResizeInteraction
   | RotateInteraction
   | ConnectorInteraction;
@@ -126,9 +152,38 @@ const toolShortcuts: Partial<Record<string, Tool>> = {
   a: 'arrow',
   l: 'line',
   p: 'freedraw',
+  k: 'laser',
   t: 'text',
   n: 'sticky',
   e: 'eraser',
+};
+
+function isDocumentChangingShortcut(event: KeyboardEvent): boolean {
+  const key = event.key.toLowerCase();
+  const modifier = event.metaKey || event.ctrlKey;
+  return (
+    (modifier && ['a', 'd', 'g', 'z'].includes(key)) ||
+    (modifier && (event.key === '[' || event.key === ']')) ||
+    event.key === 'Delete' ||
+    event.key === 'Backspace' ||
+    event.key.startsWith('Arrow') ||
+    (!modifier && !event.altKey && (key === 'm' || Boolean(toolShortcuts[key])))
+  );
+}
+
+const CONSTRAINED_DRAW_ANGLE = Math.PI / 4;
+
+const TOOL_FEEDBACK: Partial<Record<Tool, { label: string; hint: string }>> = {
+  rectangle: { label: 'Rectangle', hint: 'Drag to draw · Shift for square' },
+  ellipse: { label: 'Ellipse', hint: 'Drag to draw · Shift for circle' },
+  diamond: { label: 'Diamond', hint: 'Drag to draw · Shift to constrain' },
+  arrow: { label: 'Arrow', hint: 'Drag to connect · Shift snaps angle' },
+  line: { label: 'Line', hint: 'Drag to draw · Shift snaps angle' },
+  freedraw: { label: 'Draw', hint: 'Draw freely · select the stroke to recognize it' },
+  laser: { label: 'Laser', hint: 'Press and wave · the trail fades automatically' },
+  text: { label: 'Text', hint: 'Click anywhere and type' },
+  sticky: { label: 'Note', hint: 'Click anywhere and type' },
+  eraser: { label: 'Eraser', hint: 'Drag across objects · one undo restores the gesture' },
 };
 
 function localPoint(event: React.PointerEvent<HTMLCanvasElement>): Point {
@@ -149,7 +204,8 @@ function isEditableTarget(target: EventTarget | null): boolean {
   return (
     target instanceof HTMLInputElement ||
     target instanceof HTMLTextAreaElement ||
-    target instanceof HTMLSelectElement
+    target instanceof HTMLSelectElement ||
+    (target instanceof HTMLElement && target.isContentEditable)
   );
 }
 
@@ -164,20 +220,27 @@ function supportsInlineText(element: AnyElement): boolean {
 export function CanvasBoard(): React.JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const interactionRef = useRef<Interaction | null>(null);
-  const objectClipboardRef = useRef<AnyElement[]>([]);
+  const objectClipboardRef = useRef<ScrawlClipboardPayload>({ elements: [], assets: {} });
+  const lastPointerScreenRef = useRef<Point | null>(null);
+  const laserTrailRef = useRef<LaserPoint[]>([]);
+  const spacePressedRef = useRef(false);
   const [draft, setDraft] = useState<AnyElement | null>(null);
   const [marquee, setMarquee] = useState<Box | null>(null);
   const [guides, setGuides] = useState<SnapGuide[]>([]);
   const [hoveredHandle, setHoveredHandle] = useState<TransformHandleId | null>(null);
+  const [hoveredElementId, setHoveredElementId] = useState<string | null>(null);
+  const [spacePressed, setSpacePressed] = useState(false);
+  const [activeInteraction, setActiveInteraction] = useState<Interaction['kind'] | null>(null);
+  const [dropActive, setDropActive] = useState(false);
   const [renderRevision, setRenderRevision] = useState(0);
 
   const document = useEditor((state) => state.document);
   const view = useEditor((state) => state.view);
-  const history = useEditor((state) => state.history);
   const actions = useEditor((state) => state.actions);
   const page = getActivePage(document);
   const elements = page.elements;
   const camera = view.camera;
+  const canvasColor = document.settings.canvasColor ?? CANVAS_COLORS[document.settings.theme];
 
   const visibleElements = useMemo(() => {
     const layerOrder = new Map(page.layers.map((layer, index) => [layer.id, index]));
@@ -193,20 +256,31 @@ export function CanvasBoard(): React.JSX.Element {
       });
   }, [elements, page.layers]);
 
-  const findElement = useCallback(
-    (point: Point): AnyElement | null => {
+  const findElementFrom = useCallback(
+    (candidates: AnyElement[], point: Point, excludedIds?: Set<string>): AnyElement | null => {
       const lockedLayers = new Set(
         page.layers.filter((layer) => layer.locked).map((layer) => layer.id),
       );
-      for (let index = visibleElements.length - 1; index >= 0; index -= 1) {
-        const element = visibleElements[index]!;
+      for (let index = candidates.length - 1; index >= 0; index -= 1) {
+        const element = candidates[index]!;
+        if (excludedIds?.has(element.id)) continue;
         if (element.locked || lockedLayers.has(element.layerId)) continue;
         if (rendererFor(element).hitTest(element, point, 7 / camera.zoom)) return element;
       }
       return null;
     },
-    [camera.zoom, page.layers, visibleElements],
+    [camera.zoom, page.layers],
   );
+
+  const findElement = useCallback(
+    (point: Point): AnyElement | null => findElementFrom(visibleElements, point),
+    [findElementFrom, visibleElements],
+  );
+
+  const trackInteraction = (interaction: Interaction | null): void => {
+    interactionRef.current = interaction;
+    setActiveInteraction(interaction?.kind ?? null);
+  };
 
   const findTransformHandle = useCallback(
     (point: Point): TransformHandleId | null => {
@@ -246,31 +320,164 @@ export function CanvasBoard(): React.JSX.Element {
     [camera.zoom, elements, view.editingId, view.selectedIds, view.tool],
   );
 
-  const copySelection = useCallback((): boolean => {
-    const ids = new Set(view.selectedIds);
-    const selected = elements.filter((element) => ids.has(element.id));
-    if (selected.length === 0) return false;
-    objectClipboardRef.current = structuredClone(selected);
-    if (navigator.clipboard?.writeText) {
-      void navigator.clipboard
-        .writeText(serializeClipboardElements(selected))
-        .catch(() => undefined);
-    }
-    return true;
-  }, [elements, view.selectedIds]);
-
-  const pasteSelection = useCallback(async (): Promise<void> => {
-    let selected: AnyElement[] | null = null;
-    if (navigator.clipboard?.readText) {
-      try {
-        selected = parseClipboardElements(await navigator.clipboard.readText());
-      } catch {
-        selected = null;
+  const copySelection = useCallback(
+    (clipboard?: DataTransfer): boolean => {
+      const ids = new Set(view.selectedIds);
+      const selected = elements.filter((element) => ids.has(element.id));
+      if (selected.length === 0) return false;
+      const serialized = serializeClipboardElements(selected, document.assets);
+      const parsed = parseClipboardContent(serialized);
+      if (parsed.kind === 'scrawl') objectClipboardRef.current = structuredClone(parsed.payload);
+      if (clipboard) {
+        clipboard.setData('text/plain', serialized);
+      } else if (navigator.clipboard?.writeText) {
+        void navigator.clipboard.writeText(serialized).catch(() => undefined);
       }
-    }
-    selected ??= objectClipboardRef.current;
-    if (selected.length > 0) actions.pasteElements(selected);
-  }, [actions]);
+      return true;
+    },
+    [document.assets, elements, view.selectedIds],
+  );
+
+  const pointerTarget = useCallback((): Point => {
+    const canvas = canvasRef.current;
+    const rect = canvas?.getBoundingClientRect();
+    const screen =
+      lastPointerScreenRef.current ??
+      (rect ? { x: rect.width / 2, y: rect.height / 2 } : { x: 0, y: 0 });
+    return screenToWorld(camera, screen.x, screen.y);
+  }, [camera]);
+
+  const insertPlainText = useCallback(
+    (text: string, target: Point): boolean => {
+      if (!text) return false;
+      if (text.length > MAX_ELEMENT_TEXT_LENGTH) {
+        window.alert('Pasted text is too long for one canvas text object.');
+        return true;
+      }
+      const fontSize = document.settings.defaults.fontSize;
+      const size = measureTextSize(
+        text,
+        fontSize,
+        document.settings.mode,
+        document.settings.defaults.fontFamily,
+      );
+      const width = Math.max(24, size.width);
+      const height = Math.max(fontSize * LINE_HEIGHT, size.height);
+      actions.addElement(
+        createElement('text', {
+          x: target.x - width / 2,
+          y: target.y - height / 2,
+          width,
+          height,
+          text,
+          layerId: view.activeLayerId,
+          order: maxOrder(elements) + 1,
+          renderStyle: document.settings.mode,
+          ...document.settings.defaults,
+        }),
+      );
+      return true;
+    },
+    [actions, document.settings, elements, view.activeLayerId],
+  );
+
+  const insertImageFiles = useCallback(
+    async (files: File[], target: Point): Promise<void> => {
+      const validationError = imageInsertionError(document, files);
+      if (validationError) {
+        window.alert(validationError);
+        return;
+      }
+      try {
+        const prepared = await Promise.all(files.map(prepareImageFile));
+        const startOrder = maxOrder(elements) + 1;
+        const cascade = 24 / camera.zoom;
+        actions.addImages(
+          prepared.map((image, index) => ({
+            asset: image.asset,
+            element: createElement('image', {
+              x: target.x - image.width / 2 + index * cascade,
+              y: target.y - image.height / 2 + index * cascade,
+              width: image.width,
+              height: image.height,
+              naturalWidth: image.naturalWidth,
+              naturalHeight: image.naturalHeight,
+              assetId: image.asset.id,
+              layerId: view.activeLayerId,
+              order: startOrder + index,
+            }),
+          })),
+        );
+      } catch (error) {
+        window.alert(imageInsertionFailureMessage(error));
+      }
+    },
+    [actions, camera.zoom, document, elements, view.activeLayerId],
+  );
+
+  const pasteClipboardData = useCallback(
+    (data: DataTransfer): boolean => {
+      const target = pointerTarget();
+      const files = [...data.files];
+      if (files.length > 0) {
+        void insertImageFiles(files, target);
+        return true;
+      }
+      const text = data.getData('text/plain');
+      const parsed = text ? parseClipboardContent(text) : { kind: 'text' as const };
+      if (parsed.kind === 'scrawl') {
+        actions.pasteElements(parsed.payload.elements, target, parsed.payload.assets);
+        return true;
+      }
+      if (parsed.kind === 'invalid-scrawl') {
+        window.alert('This Scrawl clipboard content is incomplete or invalid.');
+        return true;
+      }
+      if (
+        objectClipboardRef.current.elements.length > 0 &&
+        (!text || text.includes('"type":"scrawl/clipboard"'))
+      ) {
+        actions.pasteElements(
+          objectClipboardRef.current.elements,
+          target,
+          objectClipboardRef.current.assets,
+        );
+        return true;
+      }
+      return insertPlainText(text, target);
+    },
+    [actions, insertImageFiles, insertPlainText, pointerTarget],
+  );
+
+  useEffect(() => {
+    const onCopy = (event: ClipboardEvent): void => {
+      if (interactionRef.current) return;
+      if (isEditableTarget(event.target) || !event.clipboardData) return;
+      if (!copySelection(event.clipboardData)) return;
+      event.preventDefault();
+    };
+    const onCut = (event: ClipboardEvent): void => {
+      if (interactionRef.current) return;
+      if (isEditableTarget(event.target) || !event.clipboardData) return;
+      if (!copySelection(event.clipboardData)) return;
+      event.preventDefault();
+      actions.deleteSelected();
+    };
+    const onPaste = (event: ClipboardEvent): void => {
+      if (interactionRef.current) return;
+      if (isEditableTarget(event.target) || !event.clipboardData) return;
+      if (!pasteClipboardData(event.clipboardData)) return;
+      event.preventDefault();
+    };
+    window.addEventListener('copy', onCopy);
+    window.addEventListener('cut', onCut);
+    window.addEventListener('paste', onPaste);
+    return () => {
+      window.removeEventListener('copy', onCopy);
+      window.removeEventListener('cut', onCut);
+      window.removeEventListener('paste', onPaste);
+    };
+  }, [actions, copySelection, pasteClipboardData]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -331,21 +538,26 @@ export function CanvasBoard(): React.JSX.Element {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    const dpr = window.devicePixelRatio || 1;
     renderScene({
       canvas,
       elements: draft ? [...visibleElements, draft] : visibleElements,
       camera,
       theme: document.settings.theme,
+      canvasColor,
+      sketchStyle: document.settings.sketchStyle,
       selectedIds: view.selectedIds,
       editingId: view.editingId,
       marquee,
       guides,
       gridOn: document.settings.grid,
-      dpr: window.devicePixelRatio || 1,
+      dpr,
       resolveAsset: (assetId) => document.assets[assetId]?.data ?? null,
     });
+    drawLaserTrail(canvas, camera, laserTrailRef.current, Date.now(), dpr);
   }, [
     camera,
+    canvasColor,
     document.assets,
     document.settings.grid,
     document.settings.theme,
@@ -353,34 +565,39 @@ export function CanvasBoard(): React.JSX.Element {
     guides,
     marquee,
     renderRevision,
+    document.settings.sketchStyle,
     view.selectedIds,
     view.editingId,
     visibleElements,
   ]);
 
   useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (laserTrailRef.current.length === 0) return;
+      laserTrailRef.current = trimLaserTrail(laserTrailRef.current, Date.now());
+      setRenderRevision((revision) => revision + 1);
+    }, 50);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (isEditableTarget(event.target)) return;
       const modifier = event.metaKey || event.ctrlKey;
       const key = event.key.toLowerCase();
+      if (interactionRef.current && event.key !== 'Escape' && isDocumentChangingShortcut(event)) {
+        event.preventDefault();
+        return;
+      }
+      if (event.code === 'Space' && !modifier && !event.altKey) {
+        event.preventDefault();
+        spacePressedRef.current = true;
+        setSpacePressed(true);
+        return;
+      }
       if (modifier && key === 'a') {
         event.preventDefault();
         actions.selectAll();
-        return;
-      }
-      if (modifier && key === 'c') {
-        event.preventDefault();
-        copySelection();
-        return;
-      }
-      if (modifier && key === 'x') {
-        event.preventDefault();
-        if (copySelection()) actions.deleteSelected();
-        return;
-      }
-      if (modifier && key === 'v') {
-        event.preventDefault();
-        void pasteSelection();
         return;
       }
       if (modifier && key === 'd') {
@@ -419,7 +636,7 @@ export function CanvasBoard(): React.JSX.Element {
         actions.cancelTransaction();
         actions.select([]);
         actions.setTool('select');
-        interactionRef.current = null;
+        trackInteraction(null);
         setDraft(null);
         setGuides([]);
         setMarquee(null);
@@ -435,19 +652,35 @@ export function CanvasBoard(): React.JSX.Element {
         return;
       }
       if (modifier || event.altKey) return;
+      if (key === 'm') {
+        event.preventDefault();
+        actions.toggleRenderMode();
+        return;
+      }
       const tool = toolShortcuts[event.key.toLowerCase()];
-      if (tool) actions.setTool(tool);
+      if (tool) {
+        event.preventDefault();
+        actions.setTool(tool);
+      }
+    };
+    const onKeyUp = (event: KeyboardEvent): void => {
+      if (event.code !== 'Space') return;
+      spacePressedRef.current = false;
+      setSpacePressed(false);
+    };
+    const onBlur = (): void => {
+      spacePressedRef.current = false;
+      setSpacePressed(false);
     };
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [
-    actions,
-    copySelection,
-    history.future.length,
-    history.past.length,
-    pasteSelection,
-    view.openPanel,
-  ]);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onBlur);
+    };
+  }, [actions, view.openPanel]);
 
   const createDraft = (tool: Tool, start: Point): AnyElement | null => {
     if (!shapeTools.has(tool)) return null;
@@ -473,17 +706,27 @@ export function CanvasBoard(): React.JSX.Element {
     });
   };
 
-  const updateDraft = (interaction: DrawInteraction, point: Point): AnyElement => {
+  const updateDraft = (
+    interaction: DrawInteraction,
+    point: Point,
+    constrain: boolean,
+  ): AnyElement => {
     const { startWorld, element } = interaction;
     if (element.type === 'line' || element.type === 'arrow') {
+      const rawDelta = { x: point.x - startWorld.x, y: point.y - startWorld.y };
+      const length = Math.hypot(rawDelta.x, rawDelta.y);
+      const angle = constrain
+        ? Math.round(Math.atan2(rawDelta.y, rawDelta.x) / CONSTRAINED_DRAW_ANGLE) *
+          CONSTRAINED_DRAW_ANGLE
+        : Math.atan2(rawDelta.y, rawDelta.x);
+      const delta = constrain
+        ? { x: Math.cos(angle) * length, y: Math.sin(angle) * length }
+        : rawDelta;
       const next = {
         ...element,
-        points: [
-          { x: 0, y: 0 },
-          { x: point.x - startWorld.x, y: point.y - startWorld.y },
-        ],
-        width: Math.abs(point.x - startWorld.x),
-        height: Math.abs(point.y - startWorld.y),
+        points: [{ x: 0, y: 0 }, delta],
+        width: Math.abs(delta.x),
+        height: Math.abs(delta.y),
       };
       interaction.element = next;
       return next;
@@ -498,20 +741,128 @@ export function CanvasBoard(): React.JSX.Element {
       interaction.element = next;
       return next;
     }
-    const box = normalizedBox(startWorld, point);
+    let end = point;
+    if (constrain) {
+      const delta = { x: point.x - startWorld.x, y: point.y - startWorld.y };
+      const size = Math.max(Math.abs(delta.x), Math.abs(delta.y));
+      end = {
+        x: startWorld.x + (delta.x < 0 ? -size : size),
+        y: startWorld.y + (delta.y < 0 ? -size : size),
+      };
+    }
+    const box = normalizedBox(startWorld, end);
     const next = { ...element, ...box };
     interaction.element = next;
     return next;
+  };
+
+  const eraseAtPoint = (interaction: EraseInteraction, point: Point): void => {
+    const hit = findElementFrom(interaction.candidates, point, interaction.erasedIds);
+    if (!hit) return;
+    interaction.erasedIds.add(hit.id);
+    actions.previewElements(
+      interaction.source.filter((element) => !interaction.erasedIds.has(element.id)),
+    );
+  };
+
+  const beginTextEditing = (type: 'text' | 'sticky', point: Point): void => {
+    const placement = document.settings.snapToGrid ? snapPointToGrid(point) : point;
+    const element = createElement(type, {
+      x: placement.x,
+      y: placement.y,
+      layerId: view.activeLayerId,
+      width: 180,
+      height: type === 'sticky' ? 140 : 42,
+      text: '',
+      order: maxOrder(elements) + 1,
+      renderStyle: document.settings.mode,
+      ...document.settings.defaults,
+    });
+    actions.beginTransaction();
+    actions.previewElements([...elements, element]);
+    actions.setTool('select');
+    actions.select([element.id]);
+    actions.setEditingId(element.id);
+  };
+
+  const insertLibraryItemAtPoint = (transfer: DataTransfer, point: Point): boolean => {
+    const value = readCanvasLibraryTransfer(transfer);
+    if (!value) return false;
+    if (value.kind === 'shape') {
+      const item = findLibraryItem(value.id);
+      if (!item) return false;
+      actions.addElement(
+        instantiateLibraryItem(item, {
+          center: point,
+          layerId: view.activeLayerId,
+          order: maxOrder(elements) + 1,
+          renderStyle: document.settings.mode,
+          defaults: document.settings.defaults,
+        }),
+      );
+    } else {
+      const icon = getIconDef(value.id);
+      if (!icon) return false;
+      actions.addElement(
+        createElement('icon', {
+          x: point.x - 42,
+          y: point.y - 42,
+          width: 84,
+          height: 84,
+          iconId: icon.id,
+          layerId: view.activeLayerId,
+          order: maxOrder(elements) + 1,
+          renderStyle: document.settings.mode,
+          ...document.settings.defaults,
+        }),
+      );
+    }
+    actions.setOpenPanel(null);
+    return true;
+  };
+
+  const acceptsDrop = (transfer: DataTransfer): boolean => {
+    const types = [...transfer.types];
+    return (
+      types.includes(SCRAWL_LIBRARY_TRANSFER_TYPE) ||
+      types.includes('Files') ||
+      types.includes('text/plain')
+    );
+  };
+
+  const onDrop = (event: React.DragEvent<HTMLCanvasElement>): void => {
+    event.preventDefault();
+    setDropActive(false);
+    const rect = event.currentTarget.getBoundingClientRect();
+    const screen = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    lastPointerScreenRef.current = screen;
+    const world = screenToWorld(camera, screen.x, screen.y);
+    const files = [...event.dataTransfer.files];
+    if (files.length > 0) {
+      void insertImageFiles(files, world);
+      return;
+    }
+    if (insertLibraryItemAtPoint(event.dataTransfer, world)) return;
+    insertPlainText(event.dataTransfer.getData('text/plain'), world);
   };
 
   const onPointerDown = (event: React.PointerEvent<HTMLCanvasElement>): void => {
     if (event.button !== 0 && event.button !== 1) return;
     event.currentTarget.setPointerCapture(event.pointerId);
     const screen = localPoint(event);
+    lastPointerScreenRef.current = screen;
     const world = screenToWorld(camera, screen.x, screen.y);
+    setHoveredElementId(null);
 
-    if (event.button === 1 || view.tool === 'hand') {
-      interactionRef.current = { kind: 'pan', startScreen: screen, camera };
+    if (event.button === 1 || view.tool === 'hand' || spacePressedRef.current) {
+      trackInteraction({ kind: 'pan', startScreen: screen, camera });
+      return;
+    }
+
+    if (view.tool === 'laser') {
+      laserTrailRef.current.push({ ...world, startsStroke: true, timestamp: Date.now() });
+      trackInteraction({ kind: 'laser' });
+      setRenderRevision((revision) => revision + 1);
       return;
     }
 
@@ -532,12 +883,12 @@ export function CanvasBoard(): React.JSX.Element {
         control = { kind: 'vertex', index: control.index + 1 };
         actions.previewElements(source);
       }
-      interactionRef.current = {
+      trackInteraction({
         kind: 'connector',
         source,
         elementId: connectorControl.element.id,
         control,
-      };
+      });
       return;
     }
 
@@ -547,7 +898,7 @@ export function CanvasBoard(): React.JSX.Element {
       if (!outline) return;
       const ids = new Set(view.selectedIds);
       actions.beginTransaction();
-      interactionRef.current =
+      trackInteraction(
         transformHandle === 'rotate'
           ? {
               kind: 'rotate',
@@ -565,38 +916,31 @@ export function CanvasBoard(): React.JSX.Element {
               frameCenter: outline.center,
               frameAngle: outline.angle,
               handle: transformHandle,
-            };
+            },
+      );
       setHoveredHandle(transformHandle);
       return;
     }
 
-    const hit = findElement(world);
     if (view.tool === 'eraser') {
-      if (hit) {
-        actions.select([hit.id]);
-        actions.deleteSelected();
-      }
+      const interaction: EraseInteraction = {
+        kind: 'erase',
+        source: elements,
+        candidates: visibleElements,
+        erasedIds: new Set(),
+        lastWorld: world,
+      };
+      actions.beginTransaction();
+      actions.select([]);
+      trackInteraction(interaction);
+      eraseAtPoint(interaction, world);
       return;
     }
 
+    const hit = findElement(world);
+
     if (view.tool === 'text' || view.tool === 'sticky') {
-      const placement = document.settings.snapToGrid ? snapPointToGrid(world) : world;
-      const element = createElement(view.tool, {
-        x: placement.x,
-        y: placement.y,
-        layerId: view.activeLayerId,
-        width: view.tool === 'sticky' ? 180 : 180,
-        height: view.tool === 'sticky' ? 140 : 42,
-        text: '',
-        order: maxOrder(elements) + 1,
-        renderStyle: document.settings.mode,
-        ...document.settings.defaults,
-      });
-      actions.beginTransaction();
-      actions.previewElements([...elements, element]);
-      actions.setTool('select');
-      actions.select([element.id]);
-      actions.setEditingId(element.id);
+      beginTextEditing(view.tool, world);
       return;
     }
 
@@ -605,7 +949,7 @@ export function CanvasBoard(): React.JSX.Element {
         document.settings.snapToGrid && view.tool !== 'freedraw' ? snapPointToGrid(world) : world;
       const element = createDraft(view.tool, start);
       if (!element) return;
-      interactionRef.current = { kind: 'draw', startWorld: start, element };
+      trackInteraction({ kind: 'draw', startWorld: start, element });
       setDraft(element);
       return;
     }
@@ -625,28 +969,31 @@ export function CanvasBoard(): React.JSX.Element {
         const sourceBounds = getSelectionBounds(elements, ids);
         if (!sourceBounds) return;
         actions.beginTransaction();
-        interactionRef.current = {
+        trackInteraction({
           kind: 'move',
           startWorld: world,
           source: elements,
           ids: new Set(ids),
           sourceBounds,
-        };
+        });
       }
       return;
     }
 
     if (!event.shiftKey) actions.select([]);
-    interactionRef.current = { kind: 'marquee', startWorld: world, currentWorld: world };
+    trackInteraction({ kind: 'marquee', startWorld: world, currentWorld: world });
     setMarquee({ x: world.x, y: world.y, width: 0, height: 0 });
   };
 
   const onPointerMove = (event: React.PointerEvent<HTMLCanvasElement>): void => {
     const interaction = interactionRef.current;
     const screen = localPoint(event);
+    lastPointerScreenRef.current = screen;
     const world = screenToWorld(camera, screen.x, screen.y);
     if (!interaction) {
-      setHoveredHandle(findTransformHandle(world));
+      const handle = findTransformHandle(world);
+      setHoveredHandle(handle);
+      setHoveredElementId(handle ? null : (findElement(world)?.id ?? null));
       return;
     }
 
@@ -658,12 +1005,27 @@ export function CanvasBoard(): React.JSX.Element {
       });
       return;
     }
+    if (interaction.kind === 'laser') {
+      const previous = laserTrailRef.current.at(-1);
+      if (!previous || Math.hypot(world.x - previous.x, world.y - previous.y) >= 1 / camera.zoom) {
+        laserTrailRef.current.push({ ...world, startsStroke: false, timestamp: Date.now() });
+        setRenderRevision((revision) => revision + 1);
+      }
+      return;
+    }
     if (interaction.kind === 'draw') {
       const point =
         document.settings.snapToGrid && interaction.element.type !== 'freedraw'
           ? snapPointToGrid(world)
           : world;
-      setDraft(updateDraft(interaction, point));
+      setDraft(updateDraft(interaction, point, event.shiftKey));
+      return;
+    }
+    if (interaction.kind === 'erase') {
+      for (const point of eraserSegmentPoints(interaction.lastWorld, world, 4 / camera.zoom)) {
+        eraseAtPoint(interaction, point);
+      }
+      interaction.lastWorld = world;
       return;
     }
     if (interaction.kind === 'marquee') {
@@ -785,7 +1147,7 @@ export function CanvasBoard(): React.JSX.Element {
 
   const onPointerUp = (event: React.PointerEvent<HTMLCanvasElement>): void => {
     const interaction = interactionRef.current;
-    interactionRef.current = null;
+    trackInteraction(null);
     setGuides([]);
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
@@ -796,7 +1158,8 @@ export function CanvasBoard(): React.JSX.Element {
       interaction.kind === 'move' ||
       interaction.kind === 'resize' ||
       interaction.kind === 'rotate' ||
-      interaction.kind === 'connector'
+      interaction.kind === 'connector' ||
+      interaction.kind === 'erase'
     ) {
       actions.commitTransaction();
     }
@@ -830,7 +1193,7 @@ export function CanvasBoard(): React.JSX.Element {
     }
   };
 
-  const editElement = (event: React.MouseEvent<HTMLCanvasElement>): void => {
+  const handleDoubleClick = (event: React.MouseEvent<HTMLCanvasElement>): void => {
     const rect = event.currentTarget.getBoundingClientRect();
     const world = screenToWorld(camera, event.clientX - rect.left, event.clientY - rect.top);
     const element =
@@ -841,7 +1204,10 @@ export function CanvasBoard(): React.JSX.Element {
           (candidate) =>
             supportsInlineText(candidate) && boxContainsPoint(getElementBounds(candidate), world),
         );
-    if (!element) return;
+    if (!element) {
+      if (view.tool === 'select') beginTextEditing('text', world);
+      return;
+    }
     if (!supportsInlineText(element)) return;
     actions.beginTransaction();
     actions.setTool('select');
@@ -875,22 +1241,42 @@ export function CanvasBoard(): React.JSX.Element {
   };
 
   return (
-    <div className="canvas-wrap" data-theme={document.settings.theme}>
+    <div
+      className="canvas-wrap"
+      data-theme={document.settings.theme}
+      style={{ backgroundColor: canvasColor }}
+    >
       <canvas
         aria-describedby="canvas-keyboard-help"
-        aria-keyshortcuts="V H R O D A L P T N E Delete ArrowLeft ArrowRight ArrowUp ArrowDown"
+        aria-keyshortcuts="V H R O D A L P K T N E M Space Delete ArrowLeft ArrowRight ArrowUp ArrowDown"
         aria-label="Drawing canvas"
         className="canvas-board"
+        data-drop-active={dropActive ? 'true' : undefined}
+        data-hover-element={hoveredElementId ? 'true' : undefined}
+        data-interaction={activeInteraction ?? undefined}
+        data-space-pressed={spacePressed ? 'true' : undefined}
         data-tool={view.tool}
         data-transform-handle={hoveredHandle ?? undefined}
-        onClick={(event) => {
-          if (event.detail === 2) editElement(event);
+        onDragEnter={(event) => {
+          if (!acceptsDrop(event.dataTransfer)) return;
+          event.preventDefault();
+          setDropActive(true);
         }}
+        onDragLeave={() => setDropActive(false)}
+        onDragOver={(event) => {
+          if (!acceptsDrop(event.dataTransfer)) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = 'copy';
+          setDropActive(true);
+        }}
+        onDrop={onDrop}
+        onDoubleClick={handleDoubleClick}
         onPointerCancel={onPointerUp}
         onPointerDown={onPointerDown}
         onPointerLeave={() => {
           if (!interactionRef.current) {
             setHoveredHandle(null);
+            setHoveredElementId(null);
             setGuides([]);
           }
         }}
@@ -901,17 +1287,26 @@ export function CanvasBoard(): React.JSX.Element {
       />
       <p className="sr-only" id="canvas-keyboard-help">
         Choose a drawing tool with its letter shortcut. Command or Control A selects all objects.
-        Arrow keys move the selection; hold Shift for ten canvas units. Delete removes the
-        selection. Drag the round handle to rotate; hold Shift for fifteen-degree increments.
-        Command or Control Z undoes the last change.
+        Hold Space and drag to pan. Double-click empty canvas to create text. Arrow keys move the
+        selection; hold Shift for ten canvas units. Hold Shift while drawing to constrain shapes and
+        lines. K activates the fading laser pointer. M toggles precise and sketch rendering. Delete
+        removes the selection. Drag the round handle to rotate; hold Shift for fifteen-degree
+        increments. Paste and dropped content is placed at the pointer. Command or Control Z undoes
+        the last change.
       </p>
       <div aria-live="polite" className="sr-only">
         {view.selectedIds.length === 0
           ? 'No objects selected.'
           : `${view.selectedIds.length} object${view.selectedIds.length === 1 ? '' : 's'} selected.`}
       </div>
-      {view.editingId ? <TextOverlay key={view.editingId} /> : null}
-      <ContextualRadialMenu canvasRef={canvasRef} key={view.selectedIds.join(':')} />
+      {view.editingId ? <TextOverlay key={`text:${view.editingId}`} /> : null}
+      <ContextualRadialMenu canvasRef={canvasRef} key={`menu:${view.selectedIds.join(':')}`} />
+      {TOOL_FEEDBACK[view.tool] ? (
+        <div aria-live="polite" className="tool-feedback" role="status">
+          <strong>{TOOL_FEEDBACK[view.tool]!.label}</strong>
+          <span>{TOOL_FEEDBACK[view.tool]!.hint}</span>
+        </div>
+      ) : null}
       <div className="zoom-control" aria-label="Zoom controls">
         <button
           aria-label="Zoom out"

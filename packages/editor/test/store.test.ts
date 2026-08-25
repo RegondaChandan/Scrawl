@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { createDocument, createElement } from '@scrawl/schema';
+import { describe, expect, it, vi } from 'vitest';
+import { createDocument, createElement, MAX_DOCUMENT_ASSETS } from '@scrawl/schema';
 import { createEditorStore, getActivePage } from '../src';
 
 describe('editor store', () => {
@@ -275,6 +275,55 @@ describe('editor store', () => {
     expect(getActivePage(store.getState().document).elements).toHaveLength(0);
   });
 
+  it('pastes objects around a requested canvas point', () => {
+    const store = createEditorStore();
+    const source = createElement('rectangle', {
+      x: 10,
+      y: 20,
+      width: 100,
+      height: 60,
+    });
+
+    store.getState().actions.pasteElements([source], { x: 400, y: 300 });
+
+    expect(getActivePage(store.getState().document).elements[0]).toMatchObject({
+      x: 350,
+      y: 270,
+      width: 100,
+      height: 60,
+    });
+  });
+
+  it('adds multiple image assets as one undoable insertion', () => {
+    const store = createEditorStore();
+    const insertions = ['one', 'two'].map((id, index) => ({
+      asset: {
+        id: `asset-${id}`,
+        mimeType: 'image/png',
+        size: 68,
+        data: 'data:image/png;base64,iVBORw0KGgo=',
+      },
+      element: createElement('image', {
+        x: index * 120,
+        y: 0,
+        width: 100,
+        height: 80,
+        naturalWidth: 100,
+        naturalHeight: 80,
+        assetId: `asset-${id}`,
+      }),
+    }));
+
+    store.getState().actions.addImages(insertions);
+
+    expect(getActivePage(store.getState().document).elements).toHaveLength(2);
+    expect(Object.keys(store.getState().document.assets)).toHaveLength(2);
+    expect(store.getState().history.past).toHaveLength(1);
+    store.getState().actions.undo();
+    expect(getActivePage(store.getState().document).elements).toHaveLength(0);
+    expect(Object.keys(store.getState().document.assets)).toHaveLength(0);
+  });
+
   it('repairs the active drawing layer when layer history changes', () => {
     const store = createEditorStore();
     store.getState().actions.addLayer('Temporary');
@@ -285,5 +334,252 @@ describe('editor store', () => {
     const page = getActivePage(store.getState().document);
     expect(page.layers.some((layer) => layer.id === temporaryLayerId)).toBe(false);
     expect(store.getState().view.activeLayerId).toBe(page.layers[0]?.id);
+  });
+
+  it('toggles rendering for the selection or the whole page as one undoable change', () => {
+    const document = createDocument();
+    const first = createElement('rectangle', { x: 0, y: 0, width: 80, height: 50 });
+    const second = createElement('ellipse', { x: 120, y: 0, width: 80, height: 50 });
+    document.pages[0]!.elements.push(first, second);
+    const store = createEditorStore(document);
+    const actions = store.getState().actions;
+
+    actions.select([first.id]);
+    actions.toggleRenderMode();
+    expect(
+      getActivePage(store.getState().document).elements.map((element) => element.renderStyle),
+    ).toEqual(['rough', 'crisp']);
+    expect(store.getState().document.settings.mode).toBe('crisp');
+    expect(store.getState().history.past).toHaveLength(1);
+
+    actions.undo();
+    actions.select([]);
+    actions.toggleRenderMode();
+    expect(
+      getActivePage(store.getState().document).elements.map((element) => element.renderStyle),
+    ).toEqual(['rough', 'rough']);
+    expect(store.getState().document.settings.mode).toBe('rough');
+    expect(store.getState().history.past).toHaveLength(1);
+  });
+
+  it('keeps canvas background changes undoable', () => {
+    const store = createEditorStore();
+    const actions = store.getState().actions;
+
+    actions.updateSettings({ canvasColor: '#e7f5ff' });
+    expect(store.getState().document.settings.canvasColor).toBe('#e7f5ff');
+    expect(store.getState().history.past).toHaveLength(1);
+
+    actions.undo();
+    expect(store.getState().document.settings.canvasColor).toBeUndefined();
+  });
+
+  it('releases unused image assets on deletion and restores them with undo', () => {
+    const store = createEditorStore();
+    const image = createElement('image', {
+      x: 20,
+      y: 30,
+      width: 100,
+      height: 80,
+      naturalWidth: 100,
+      naturalHeight: 80,
+      assetId: 'asset-1',
+    });
+    const actions = store.getState().actions;
+    actions.addImage(
+      {
+        id: 'asset-1',
+        mimeType: 'image/png',
+        size: 3,
+        data: 'data:image/png;base64,YWJj',
+      },
+      image,
+    );
+    actions.select([image.id]);
+    actions.deleteSelected();
+
+    expect(store.getState().document.assets).toEqual({});
+    actions.undo();
+    expect(store.getState().document.assets['asset-1']).toBeDefined();
+    expect(getActivePage(store.getState().document).elements[0]?.type).toBe('image');
+  });
+
+  it('releases assets from a removed page and restores them with undo', () => {
+    const store = createEditorStore();
+    const actions = store.getState().actions;
+    actions.addPage('Images');
+    const imagePageId = store.getState().document.activePageId;
+    const image = createElement('image', {
+      x: 0,
+      y: 0,
+      width: 20,
+      height: 20,
+      naturalWidth: 20,
+      naturalHeight: 20,
+      assetId: 'page-asset',
+    });
+    actions.addImage(
+      {
+        id: 'page-asset',
+        mimeType: 'image/png',
+        size: 3,
+        data: 'data:image/png;base64,YWJj',
+      },
+      image,
+    );
+
+    actions.removePage(imagePageId);
+
+    expect(store.getState().document.assets['page-asset']).toBeUndefined();
+    actions.undo();
+    expect(store.getState().document.assets['page-asset']).toBeDefined();
+    expect(store.getState().document.pages.some((page) => page.id === imagePageId)).toBe(true);
+  });
+
+  it('pastes image elements and their assets atomically', () => {
+    const store = createEditorStore();
+    const image = createElement('image', {
+      x: 0,
+      y: 0,
+      width: 40,
+      height: 30,
+      naturalWidth: 40,
+      naturalHeight: 30,
+      assetId: 'clipboard-asset',
+    });
+    const asset = {
+      id: 'clipboard-asset',
+      mimeType: 'image/png',
+      size: 3,
+      data: 'data:image/png;base64,YWJj',
+    };
+
+    store.getState().actions.pasteElements([image], { x: 200, y: 160 }, { [asset.id]: asset });
+
+    expect(store.getState().document.assets[asset.id]).toEqual(asset);
+    expect(getActivePage(store.getState().document).elements[0]).toMatchObject({
+      type: 'image',
+      assetId: asset.id,
+    });
+  });
+
+  it('revalidates image limits inside the atomic store update', () => {
+    const document = createDocument();
+    for (let index = 0; index < MAX_DOCUMENT_ASSETS; index += 1) {
+      const id = `asset-${index}`;
+      document.assets[id] = {
+        id,
+        mimeType: 'image/png',
+        size: 1,
+        data: 'data:image/png;base64,YQ==',
+      };
+      document.pages[0]!.elements.push(
+        createElement('image', {
+          id: `image-${index}`,
+          x: index * 2,
+          y: 0,
+          width: 1,
+          height: 1,
+          naturalWidth: 1,
+          naturalHeight: 1,
+          assetId: id,
+          order: index,
+        }),
+      );
+    }
+    const store = createEditorStore(document);
+    const image = createElement('image', {
+      x: 0,
+      y: 0,
+      width: 20,
+      height: 20,
+      naturalWidth: 20,
+      naturalHeight: 20,
+      assetId: 'one-too-many',
+    });
+
+    expect(() =>
+      store.getState().actions.addImage(
+        {
+          id: 'one-too-many',
+          mimeType: 'image/png',
+          size: 1,
+          data: 'data:image/png;base64,YQ==',
+        },
+        image,
+      ),
+    ).toThrow('too many assets');
+    expect(getActivePage(store.getState().document).elements).toHaveLength(MAX_DOCUMENT_ASSETS);
+    expect(store.getState().history.past).toHaveLength(0);
+  });
+
+  it('remeasures free text when its rendering mode changes', () => {
+    const context = {
+      font: '',
+      measureText(value: string) {
+        return { width: value.length * (this.font.includes('Bradley Hand') ? 12 : 8) };
+      },
+    };
+    vi.stubGlobal('document', { createElement: () => ({ getContext: () => context }) });
+    const document = createDocument();
+    const text = createElement('text', {
+      x: 0,
+      y: 0,
+      width: 10,
+      height: 10,
+      text: 'hello',
+      fontSize: 20,
+    });
+    document.pages[0]!.elements.push(text);
+    const store = createEditorStore(document);
+    store.getState().actions.select([text.id]);
+
+    store.getState().actions.toggleRenderMode();
+
+    expect(getActivePage(store.getState().document).elements[0]).toMatchObject({
+      renderStyle: 'rough',
+      width: 60,
+      height: 27,
+    });
+    vi.unstubAllGlobals();
+  });
+
+  it('applies an explicit rendering mode atomically and remeasures selected text', () => {
+    const context = {
+      font: '',
+      measureText(value: string) {
+        return { width: value.length * (this.font.includes('Bradley Hand') ? 12 : 8) };
+      },
+    };
+    vi.stubGlobal('document', { createElement: () => ({ getContext: () => context }) });
+    const document = createDocument();
+    const text = createElement('text', {
+      x: 0,
+      y: 0,
+      text: 'hello',
+      fontSize: 20,
+      width: 40,
+      height: 27,
+    });
+    document.pages[0]!.elements.push(text);
+    const store = createEditorStore(document);
+    const actions = store.getState().actions;
+    actions.select([text.id]);
+
+    actions.setRenderMode('rough');
+
+    expect(getActivePage(store.getState().document).elements[0]).toMatchObject({
+      renderStyle: 'rough',
+      width: 60,
+      height: 27,
+    });
+    expect(store.getState().document.settings.mode).toBe('crisp');
+    expect(store.getState().history.past).toHaveLength(1);
+    actions.undo();
+    expect(getActivePage(store.getState().document).elements[0]).toMatchObject({
+      renderStyle: 'crisp',
+      width: 40,
+    });
+    vi.unstubAllGlobals();
   });
 });

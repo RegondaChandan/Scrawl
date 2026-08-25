@@ -8,7 +8,7 @@ import {
   preloadImages,
 } from '@scrawl/engine';
 import type { PdfMargin, PdfOrientation, PdfPaperSize, PdfScaling } from '@scrawl/engine/pdf';
-import type { AnyElement, ScrawlPage } from '@scrawl/schema';
+import { CANVAS_COLORS, type AnyElement, type ScrawlPage } from '@scrawl/schema';
 import { downloadBlob, safeFileName } from '../files';
 import { useEditor } from '../use-editor';
 import { Icon } from './Icon';
@@ -79,6 +79,7 @@ export function ExportDialog(): React.JSX.Element | null {
       : document.pages.filter((page) => page.id === document.activePageId);
   const pageElements = pages.map((page) => ({ page, elements: visibleElements(page) }));
   const resolveAsset = (assetId: string): string | null => document.assets[assetId]?.data ?? null;
+  const canvasColor = document.settings.canvasColor ?? CANVAS_COLORS[document.settings.theme];
   const close = (): void => actions.setOpenPanel(null);
 
   const preloadPageAssets = async (): Promise<void> => {
@@ -109,6 +110,8 @@ export function ExportDialog(): React.JSX.Element | null {
         const canvas = exportToCanvas(entry.elements, {
           scale,
           theme: document.settings.theme,
+          canvasColor,
+          sketchStyle: document.settings.sketchStyle,
           background,
           grid,
           resolveAsset,
@@ -271,6 +274,8 @@ export function ExportDialog(): React.JSX.Element | null {
                   dangerouslySetInnerHTML={{
                     __html: exportSVG(elements, {
                       theme: document.settings.theme,
+                      canvasColor,
+                      sketchStyle: document.settings.sketchStyle,
                       background,
                       grid,
                       resolveAsset,

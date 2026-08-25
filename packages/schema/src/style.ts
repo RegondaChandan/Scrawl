@@ -1,4 +1,5 @@
 export type StyleMode = 'crisp' | 'rough';
+export type SketchStyle = 'pencil' | 'marker';
 export type Theme = 'light' | 'dark';
 export type FillStyle = 'hachure' | 'cross-hatch' | 'solid';
 export type StrokeStyle = 'solid' | 'dashed' | 'dotted';
@@ -73,6 +74,28 @@ export const BACKGROUND_COLORS = [
 
 export const STICKY_COLORS = ['#fbe6a2', '#cde9d7', '#c7ede9', '#fbd9ce', '#e6d6f5'];
 
+export const CANVAS_BACKGROUND_COLORS = [
+  '#ffffff',
+  '#f8f5ec',
+  '#fff5f5',
+  '#fff9db',
+  '#ebfbee',
+  '#e7f5ff',
+] as const;
+
+export function isCanvasColor(value: unknown): value is string {
+  return typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value);
+}
+
+export function canvasThemeForColor(color: unknown, fallback: Theme): Theme {
+  if (!isCanvasColor(color)) return fallback;
+  const red = Number.parseInt(color.slice(1, 3), 16) / 255;
+  const green = Number.parseInt(color.slice(3, 5), 16) / 255;
+  const blue = Number.parseInt(color.slice(5, 7), 16) / 255;
+  const luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+  return luminance < 0.5 ? 'dark' : 'light';
+}
+
 const DARK_COLORS: Record<string, string> = {
   '#2b2a26': '#eceae2',
   '#e8663d': '#ff8a66',
@@ -88,7 +111,7 @@ const DARK_COLORS: Record<string, string> = {
 };
 
 export const CANVAS_COLORS: Record<Theme, string> = {
-  light: '#f6f4ee',
+  light: '#ffffff',
   dark: '#141319',
 };
 

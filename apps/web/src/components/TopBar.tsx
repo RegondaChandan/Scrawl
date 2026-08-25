@@ -3,40 +3,22 @@ import { exportSVG, exportToCanvas, preloadIcons, preloadImages } from '@scrawl/
 import { type DrawioImportResult } from '@scrawl/interchange';
 import { MAX_DRAWIO_FILE_BYTES } from '@scrawl/interchange/limits';
 import {
+  CANVAS_COLORS,
   createDocument,
   createElement,
-  createId,
-  MAX_EMBEDDED_IMAGE_BYTES,
   maxOrder,
   serializeDocument,
-  SUPPORTED_IMAGE_MIME_TYPES,
 } from '@scrawl/schema';
 import { MAX_SCRAWL_FILE_BYTES, readDocumentFile } from '@scrawl/storage';
 import { downloadBlob, downloadText, safeFileName } from '../files';
+import {
+  imageInsertionError,
+  imageInsertionFailureMessage,
+  prepareImageFile,
+} from '../image-files';
 import { useEditor } from '../use-editor';
 import { Icon } from './Icon';
 import { ImportDialog, type ImportDialogState } from './ImportDialog';
-
-function readDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () =>
-      typeof reader.result === 'string'
-        ? resolve(reader.result)
-        : reject(new Error('No image data'));
-    reader.onerror = () => reject(reader.error ?? new Error('Unable to read the image'));
-    reader.readAsDataURL(file);
-  });
-}
-
-function readImageSize(source: string): Promise<{ width: number; height: number }> {
-  return new Promise((resolve, reject) => {
-    const image = new window.Image();
-    image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight });
-    image.onerror = () => reject(new Error('Unable to decode the image'));
-    image.src = source;
-  });
-}
 
 export function TopBar(): React.JSX.Element {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -63,6 +45,7 @@ export function TopBar(): React.JSX.Element {
       return layerDifference || left.order - right.order;
     });
   const isDark = document.settings.theme === 'dark';
+  const canvasColor = document.settings.canvasColor ?? CANVAS_COLORS[document.settings.theme];
 
   useEffect(() => {
     if (!downloadMenuOpen) return;
@@ -99,6 +82,8 @@ export function TopBar(): React.JSX.Element {
       `${safeFileName(document.title)}.svg`,
       exportSVG(orderedElements, {
         theme: document.settings.theme,
+        canvasColor,
+        sketchStyle: document.settings.sketchStyle,
         resolveAsset: (assetId) => document.assets[assetId]?.data ?? null,
       }),
       'image/svg+xml',
@@ -123,6 +108,8 @@ export function TopBar(): React.JSX.Element {
     const canvas = exportToCanvas(orderedElements, {
       scale: 2,
       theme: document.settings.theme,
+      canvasColor,
+      sketchStyle: document.settings.sketchStyle,
       resolveAsset,
     });
     const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
@@ -130,38 +117,31 @@ export function TopBar(): React.JSX.Element {
   };
 
   const insertImage = async (file: File): Promise<void> => {
-    if (!SUPPORTED_IMAGE_MIME_TYPES.has(file.type) || file.size > MAX_EMBEDDED_IMAGE_BYTES) {
-      window.alert('Choose a PNG, JPEG, WebP, or GIF image smaller than 10 MB.');
+    const validationError = imageInsertionError(document, [file]);
+    if (validationError) {
+      window.alert(validationError);
       return;
     }
     try {
-      const data = await readDataUrl(file);
-      const natural = await readImageSize(data);
-      const scale = Math.min(1, 420 / natural.width, 300 / natural.height);
-      const width = Math.max(24, Math.round(natural.width * scale));
-      const height = Math.max(24, Math.round(natural.height * scale));
+      const prepared = await prepareImageFile(file);
       const canvasCenter = {
         x: window.innerWidth / 2,
         y: Math.max(0, window.innerHeight - 58) / 2,
       };
-      const assetId = createId();
       const element = createElement('image', {
-        x: (canvasCenter.x - view.camera.x) / view.camera.zoom - width / 2,
-        y: (canvasCenter.y - view.camera.y) / view.camera.zoom - height / 2,
-        width,
-        height,
-        naturalWidth: natural.width,
-        naturalHeight: natural.height,
-        assetId,
+        x: (canvasCenter.x - view.camera.x) / view.camera.zoom - prepared.width / 2,
+        y: (canvasCenter.y - view.camera.y) / view.camera.zoom - prepared.height / 2,
+        width: prepared.width,
+        height: prepared.height,
+        naturalWidth: prepared.naturalWidth,
+        naturalHeight: prepared.naturalHeight,
+        assetId: prepared.asset.id,
         layerId: view.activeLayerId,
         order: maxOrder(activePage.elements) + 1,
       });
-      actions.addImage(
-        { id: assetId, mimeType: file.type, size: file.size, name: file.name, data },
-        element,
-      );
-    } catch {
-      window.alert('Scrawl could not read this image.');
+      actions.addImage(prepared.asset, element);
+    } catch (error) {
+      window.alert(imageInsertionFailureMessage(error));
     }
   };
 

@@ -2,11 +2,16 @@ import { expect, type Locator, type Page } from '@playwright/test';
 
 interface StoredElement {
   type: string;
+  renderStyle?: string;
   x: number;
   y: number;
   width: number;
   height: number;
   text?: string;
+  assetId?: string;
+  iconId?: string;
+  naturalWidth?: number;
+  naturalHeight?: number;
   points?: Array<{ x: number; y: number }>;
 }
 
@@ -14,6 +19,8 @@ interface StoredDocument {
   id: string;
   title: string;
   activePageId: string;
+  assets: Record<string, { id: string; mimeType: string; size: number; name?: string }>;
+  settings: { mode: string; sketchStyle: string; canvasColor?: string };
   pages: Array<{
     id: string;
     name: string;

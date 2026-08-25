@@ -18,6 +18,7 @@ import {
   type AnyElement,
   type FontKey,
 } from '@scrawl/schema';
+import { recognizeFreedraw } from '@scrawl/editor';
 import { getSelectionBounds, worldToScreen } from '@scrawl/engine';
 import { useSelectionProperties } from '../use-selection-properties';
 import { useEditor } from '../use-editor';
@@ -65,6 +66,7 @@ export function ContextualRadialMenu({
   canvasRef,
 }: ContextualRadialMenuProps): React.JSX.Element | null {
   const [activeCategory, setActiveCategory] = useState<RadialCategory>('style');
+  const [recognitionMessage, setRecognitionMessage] = useState('');
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   const view = useEditor((state) => state.view);
   const { propertyEditorMode } = useUiPreferences();
@@ -137,23 +139,62 @@ export function ContextualRadialMenu({
     switch (activeCategory) {
       case 'style':
         return (
-          <div aria-label="Rendering style" className="radial-option-segment" role="group">
-            <button
-              data-active={currentRenderStyle === 'crisp' || undefined}
-              onClick={() => applyRenderStyle('crisp')}
-              type="button"
-            >
-              <IconTarget aria-hidden="true" size={18} stroke={1.8} />
-              Precise
-            </button>
-            <button
-              data-active={currentRenderStyle === 'rough' || undefined}
-              onClick={() => applyRenderStyle('rough')}
-              type="button"
-            >
-              <IconScribble aria-hidden="true" size={19} stroke={1.8} />
-              Sketch
-            </button>
+          <div className="radial-options-content radial-style-options">
+            <div aria-label="Rendering style" className="radial-option-segment" role="group">
+              <button
+                data-active={currentRenderStyle === 'crisp' || undefined}
+                onClick={() => applyRenderStyle('crisp')}
+                type="button"
+              >
+                <IconTarget aria-hidden="true" size={18} stroke={1.8} />
+                Precise
+              </button>
+              <button
+                data-active={currentRenderStyle === 'rough' || undefined}
+                onClick={() => applyRenderStyle('rough')}
+                type="button"
+              >
+                <IconScribble aria-hidden="true" size={19} stroke={1.8} />
+                Sketch
+              </button>
+            </div>
+            {currentRenderStyle === 'rough' ? (
+              <div aria-label="Sketch texture" className="radial-option-segment" role="group">
+                {(['pencil', 'marker'] as const).map((texture) => (
+                  <button
+                    data-active={document.settings.sketchStyle === texture || undefined}
+                    key={texture}
+                    onClick={() => actions.updateSettings({ sketchStyle: texture })}
+                    type="button"
+                  >
+                    {texture === 'pencil' ? 'Pencil' : 'Marker'}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            {selected.length === 1 &&
+            representative?.type === 'freedraw' &&
+            !representative.locked ? (
+              <>
+                <button
+                  className="radial-recognition-button"
+                  onClick={() => {
+                    const recognized = recognizeFreedraw(representative);
+                    if (!recognized) {
+                      setRecognitionMessage('Try a cleaner outline.');
+                      return;
+                    }
+                    actions.updateElements([representative.id], () => recognized);
+                    setRecognitionMessage(
+                      `Converted to ${recognized.type === 'shape' ? recognized.shapeKind : recognized.type}.`,
+                    );
+                  }}
+                  type="button"
+                >
+                  {recognitionMessage || 'Recognize stroke'}
+                </button>
+              </>
+            ) : null}
           </div>
         );
       case 'stroke':

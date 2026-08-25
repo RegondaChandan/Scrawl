@@ -2,6 +2,7 @@ export * from './arrange';
 export * from './connector';
 export * from './document';
 export * from './library';
+export * from './recognize';
 export * from './resize';
 export * from './rotate';
 export * from './snap';

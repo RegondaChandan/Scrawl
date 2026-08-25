@@ -19,8 +19,16 @@ import {
   MAX_LAYERS_PER_PAGE,
   MAX_POINTS_PER_ELEMENT,
 } from './limits';
-import type { ElementDefaults, FillStyle, StrokeStyle, StyleMode, TextAlign, Theme } from './style';
-import { DEFAULT_ELEMENT_DEFAULTS, isFontKey } from './style';
+import type {
+  ElementDefaults,
+  FillStyle,
+  SketchStyle,
+  StrokeStyle,
+  StyleMode,
+  TextAlign,
+  Theme,
+} from './style';
+import { DEFAULT_ELEMENT_DEFAULTS, isCanvasColor, isFontKey } from './style';
 
 export const SCHEMA_VERSION = 3 as const;
 export const DEFAULT_LAYER_ID = 'default';
@@ -55,7 +63,9 @@ export interface ScrawlAsset {
 
 export interface DocumentSettings {
   mode: StyleMode;
+  sketchStyle: SketchStyle;
   theme: Theme;
+  canvasColor?: string;
   grid: boolean;
   snapToGrid: boolean;
   defaults: ElementDefaults;
@@ -98,6 +108,7 @@ export function createDocument(title = 'Untitled'): ScrawlDocument {
     assets: {},
     settings: {
       mode: 'crisp',
+      sketchStyle: 'pencil',
       theme: 'light',
       grid: true,
       snapToGrid: false,
@@ -206,6 +217,7 @@ const SHAPE_KINDS: ReadonlySet<string> = new Set<ShapeKind>([
 const FILL_STYLES: ReadonlySet<string> = new Set<FillStyle>(['hachure', 'cross-hatch', 'solid']);
 const STROKE_STYLES: ReadonlySet<string> = new Set<StrokeStyle>(['solid', 'dashed', 'dotted']);
 const STYLE_MODES: ReadonlySet<string> = new Set<StyleMode>(['crisp', 'rough']);
+const SKETCH_STYLES: ReadonlySet<string> = new Set<SketchStyle>(['pencil', 'marker']);
 const TEXT_ALIGNS: ReadonlySet<string> = new Set<TextAlign>(['left', 'center', 'right']);
 const ROUTING_STYLES: ReadonlySet<string> = new Set(['straight', 'elbow']);
 
@@ -683,6 +695,13 @@ export function parseDocument(value: unknown): ScrawlDocument {
     throw new DocumentValidationError('activePageId does not reference a page');
   }
   const settings = asObject(root.settings, 'settings');
+  const canvasColor =
+    settings.canvasColor === undefined
+      ? undefined
+      : asBoundedString(settings.canvasColor, 'settings.canvasColor', 100);
+  if (canvasColor !== undefined && !isCanvasColor(canvasColor)) {
+    throw new DocumentValidationError('settings.canvasColor must be a six-digit hex color');
+  }
 
   return {
     type: 'scrawl',
@@ -694,7 +713,12 @@ export function parseDocument(value: unknown): ScrawlDocument {
     assets,
     settings: {
       mode: asEnum<StyleMode>(settings.mode, 'settings.mode', STYLE_MODES),
+      sketchStyle:
+        settings.sketchStyle === undefined
+          ? 'pencil'
+          : asEnum<SketchStyle>(settings.sketchStyle, 'settings.sketchStyle', SKETCH_STYLES),
       theme: asEnum<Theme>(settings.theme, 'settings.theme', new Set(['light', 'dark'])),
+      ...(canvasColor === undefined ? {} : { canvasColor }),
       grid: asBoolean(settings.grid, 'settings.grid'),
       snapToGrid: asBoolean(settings.snapToGrid, 'settings.snapToGrid'),
       defaults: validateDefaults(settings.defaults),

@@ -30,6 +30,30 @@ describe('Scrawl documents', () => {
     expect(parseDocument(JSON.parse(serializeDocument(document)))).toEqual(document);
   });
 
+  it('persists an optional canvas color without changing older documents', () => {
+    const document = createDocument();
+    expect(parseDocument(document).settings.canvasColor).toBeUndefined();
+
+    document.settings.canvasColor = '#fff9db';
+    expect(parseDocument(JSON.parse(serializeDocument(document))).settings.canvasColor).toBe(
+      '#fff9db',
+    );
+  });
+
+  it('persists sketch texture and defaults older version-three documents to pencil', () => {
+    const document = createDocument();
+    document.settings.sketchStyle = 'marker';
+    expect(parseDocument(JSON.parse(serializeDocument(document))).settings.sketchStyle).toBe(
+      'marker',
+    );
+
+    const older = structuredClone(document) as unknown as {
+      settings: Record<string, unknown>;
+    };
+    delete older.settings['sketchStyle'];
+    expect(parseDocument(older).settings.sketchStyle).toBe('pencil');
+  });
+
   it('round-trips bundled font choices', () => {
     const document = createDocument();
     const fonts = ['space-grotesk', 'caveat', 'kalam', 'ibm-plex-mono'] as const;
@@ -276,5 +300,15 @@ describe('Scrawl documents', () => {
       data: `data:image/png;base64,${'A'.repeat(encodedLength)}`,
     };
     expect(() => parseDocument(oversized)).toThrow('exceeds the embedded image limit');
+  });
+
+  it('accepts safe canvas colors and rejects unsupported CSS values', () => {
+    const safe = createDocument();
+    safe.settings.canvasColor = '#dbeafe';
+    expect(parseDocument(safe).settings.canvasColor).toBe('#dbeafe');
+
+    const unsafe = createDocument();
+    unsafe.settings.canvasColor = 'url(https://example.com/color)';
+    expect(() => parseDocument(unsafe)).toThrow('six-digit hex color');
   });
 });
