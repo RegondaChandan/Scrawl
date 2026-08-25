@@ -182,7 +182,7 @@ export function TopBar(): React.JSX.Element {
   return (
     <>
       <header className="top-bar">
-        <div className="brand" aria-label="Scrawl">
+        <h1 className="brand" aria-label="Scrawl">
           <img
             alt=""
             className="brand-mark"
@@ -192,7 +192,7 @@ export function TopBar(): React.JSX.Element {
             width="38"
           />
           <span className="brand-name">Scrawl</span>
-        </div>
+        </h1>
 
         <label className="title-field">
           <span className="sr-only">Document title</span>

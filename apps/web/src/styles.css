@@ -96,6 +96,7 @@ select:focus-visible {
 .brand {
   gap: 7px;
   width: max-content;
+  margin: 0;
 }
 
 .brand-mark {

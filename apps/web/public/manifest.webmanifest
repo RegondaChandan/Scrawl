@@ -1,7 +1,7 @@
 {
   "name": "Scrawl",
   "short_name": "Scrawl",
-  "description": "A local-first open-source canvas for diagrams and visual thinking.",
+  "description": "A free, open-source, local-first visual canvas for diagrams, whiteboards, sketches, and visual thinking.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#f6f4ee",
