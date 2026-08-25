@@ -1,12 +1,16 @@
 import { createStore, type StoreApi } from 'zustand/vanilla';
+import { getSceneBounds, measureTextSize } from '@scrawl/engine';
 import {
   createDocument,
   createId,
+  LINE_HEIGHT,
   parseDocument,
   type AnyElement,
   type DocumentSettings,
+  type Point,
   type ScrawlAsset,
   type ScrawlDocument,
+  type StyleMode,
 } from '@scrawl/schema';
 import {
   addPage as addDocumentPage,
@@ -17,6 +21,7 @@ import {
   getActivePage,
   mapElements,
   moveElementsToLayer as moveDocumentElementsToLayer,
+  pruneUnusedAssets,
   removeLayer as removeDocumentLayer,
   removeElements,
   removePage as removeDocumentPage,
@@ -60,6 +65,11 @@ export interface AddElementOptions {
   selectAfterInsert?: boolean;
 }
 
+export interface ImageInsertion {
+  asset: ScrawlAsset;
+  element: AnyElement;
+}
+
 export interface EditorActions {
   loadDocument: (document: unknown) => void;
   setTitle: (title: string) => void;
@@ -68,15 +78,22 @@ export interface EditorActions {
   select: (ids: string[]) => void;
   setEditingId: (id: string | null) => void;
   setOpenPanel: (panel: OpenPanel) => void;
+  setRenderMode: (mode: StyleMode) => void;
+  toggleRenderMode: () => void;
   updateSettings: (settings: Partial<DocumentSettings>) => void;
   addElement: (element: AnyElement, options?: AddElementOptions) => void;
   insertElements: (elements: AnyElement[]) => void;
   addImage: (asset: ScrawlAsset, element: AnyElement) => void;
+  addImages: (insertions: ImageInsertion[]) => void;
   updateElements: (ids: Iterable<string>, update: (element: AnyElement) => AnyElement) => void;
   deleteSelected: () => void;
   selectAll: () => void;
   duplicateSelected: () => void;
-  pasteElements: (elements: AnyElement[]) => void;
+  pasteElements: (
+    elements: AnyElement[],
+    center?: Point,
+    assets?: Readonly<Record<string, ScrawlAsset>>,
+  ) => void;
   groupSelected: () => void;
   ungroupSelected: () => void;
   alignSelected: (alignment: Alignment) => void;
@@ -158,6 +175,53 @@ export function createEditorStore(initialDocument: ScrawlDocument = createDocume
       return true;
     };
 
+    const applyRenderMode = (targetMode: StyleMode): void => {
+      const state = get();
+      const selectedIds = new Set(state.view.selectedIds);
+      commit((current) => {
+        const page = getActivePage(current);
+        const convertWholePage = selectedIds.size === 0;
+        let elementsChanged = false;
+        const nextElements = page.elements.map((element) => {
+          if (!convertWholePage && !selectedIds.has(element.id)) return element;
+          if (element.type === 'text') {
+            const size = measureTextSize(
+              element.text || ' ',
+              element.fontSize,
+              targetMode,
+              element.fontFamily,
+            );
+            const width = Math.max(24, size.width);
+            const height = Math.max(element.fontSize * LINE_HEIGHT, size.height);
+            if (
+              element.renderStyle === targetMode &&
+              element.width === width &&
+              element.height === height
+            ) {
+              return element;
+            }
+            elementsChanged = true;
+            return {
+              ...element,
+              renderStyle: targetMode,
+              width,
+              height,
+              version: element.version + 1,
+            };
+          }
+          if (element.renderStyle === targetMode) return element;
+          elementsChanged = true;
+          return { ...element, renderStyle: targetMode, version: element.version + 1 };
+        });
+        const settingsChanged = convertWholePage && current.settings.mode !== targetMode;
+        if (!elementsChanged && !settingsChanged) return current;
+        const next = elementsChanged ? replaceActiveElements(current, nextElements) : current;
+        return settingsChanged
+          ? { ...next, settings: { ...next.settings, mode: targetMode } }
+          : next;
+      });
+    };
+
     const actions: EditorActions = {
       loadDocument(value) {
         const document = parseDocument(value);
@@ -190,6 +254,18 @@ export function createEditorStore(initialDocument: ScrawlDocument = createDocume
       },
       setOpenPanel(openPanel) {
         set({ view: { ...get().view, openPanel } });
+      },
+      setRenderMode(mode) {
+        applyRenderMode(mode);
+      },
+      toggleRenderMode() {
+        const state = get();
+        const activePage = getActivePage(state.document);
+        const selectedIds = new Set(state.view.selectedIds);
+        const representative = activePage.elements.find((element) => selectedIds.has(element.id));
+        const sourceMode = representative?.renderStyle ?? state.document.settings.mode;
+        const targetMode: StyleMode = sourceMode === 'rough' ? 'crisp' : 'rough';
+        applyRenderMode(targetMode);
       },
       updateSettings(settings) {
         commit((current) => ({
@@ -226,11 +302,36 @@ export function createEditorStore(initialDocument: ScrawlDocument = createDocume
         });
       },
       addImage(asset, element) {
-        commit((current) => ({
-          ...appendElement(current, element),
-          assets: { ...current.assets, [asset.id]: asset },
-        }));
+        commit((current) => {
+          const retained = pruneUnusedAssets(current);
+          return parseDocument({
+            ...appendElement(retained, element),
+            assets: { ...retained.assets, [asset.id]: asset },
+          });
+        });
         set({ view: { ...get().view, selectedIds: [element.id], tool: 'select' } });
+      },
+      addImages(insertions) {
+        if (insertions.length === 0) return;
+        const assets = Object.fromEntries(
+          insertions.map(({ asset }) => [asset.id, asset] as const),
+        );
+        const elements = insertions.map(({ element }) => element);
+        commit((current) => {
+          const retained = pruneUnusedAssets(current);
+          return parseDocument({
+            ...appendElements(retained, elements),
+            assets: { ...retained.assets, ...assets },
+          });
+        });
+        set({
+          view: {
+            ...get().view,
+            selectedIds: elements.map((element) => element.id),
+            editingId: null,
+            tool: 'select',
+          },
+        });
       },
       updateElements(ids, update) {
         const selected = new Set(ids);
@@ -239,7 +340,7 @@ export function createEditorStore(initialDocument: ScrawlDocument = createDocume
       deleteSelected() {
         const ids = new Set(get().view.selectedIds);
         if (ids.size === 0) return;
-        commit((current) => removeElements(current, ids));
+        commit((current) => pruneUnusedAssets(removeElements(current, ids)));
         set(resetSelection());
       },
       selectAll() {
@@ -258,7 +359,7 @@ export function createEditorStore(initialDocument: ScrawlDocument = createDocume
         commit((document) => replaceActiveElements(document, result.elements));
         set({ view: { ...get().view, selectedIds: result.selectedIds, editingId: null } });
       },
-      pasteElements(elements) {
+      pasteElements(elements, center, assets = {}) {
         if (elements.length === 0) return;
         const state = get();
         const page = getActivePage(state.document);
@@ -266,11 +367,41 @@ export function createEditorStore(initialDocument: ScrawlDocument = createDocume
         const fallbackLayerId = layerIds.has(state.view.activeLayerId)
           ? state.view.activeLayerId
           : page.layers[0]!.id;
-        const normalized = elements.map((element) =>
-          layerIds.has(element.layerId) ? element : { ...element, layerId: fallbackLayerId },
-        );
-        const result = cloneElements(normalized, page.elements);
-        commit((document) => replaceActiveElements(document, result.elements));
+        const assetIdMap = new Map<string, string>();
+        const pastedAssets: Record<string, ScrawlAsset> = {};
+        for (const asset of Object.values(assets)) {
+          const existing = state.document.assets[asset.id];
+          const targetId =
+            existing && JSON.stringify(existing) !== JSON.stringify(asset) ? createId() : asset.id;
+          assetIdMap.set(asset.id, targetId);
+          if (!existing || targetId !== asset.id) {
+            pastedAssets[targetId] = { ...asset, id: targetId };
+          }
+        }
+        const normalized = elements.map((element) => {
+          const layerElement = layerIds.has(element.layerId)
+            ? element
+            : { ...element, layerId: fallbackLayerId };
+          return layerElement.type === 'image' && assetIdMap.has(layerElement.assetId)
+            ? { ...layerElement, assetId: assetIdMap.get(layerElement.assetId)! }
+            : layerElement;
+        });
+        const bounds = center ? getSceneBounds(normalized) : null;
+        const offset =
+          center && bounds
+            ? {
+                x: center.x - (bounds.x + bounds.width / 2),
+                y: center.y - (bounds.y + bounds.height / 2),
+              }
+            : undefined;
+        const result = cloneElements(normalized, page.elements, offset);
+        commit((document) => {
+          const retained = pruneUnusedAssets(document);
+          return parseDocument({
+            ...replaceActiveElements(retained, result.elements),
+            assets: { ...retained.assets, ...pastedAssets },
+          });
+        });
         set({ view: { ...get().view, selectedIds: result.selectedIds, editingId: null } });
       },
       groupSelected() {
@@ -381,7 +512,10 @@ export function createEditorStore(initialDocument: ScrawlDocument = createDocume
           set({ history: { ...state.history, checkpoint: null } });
           return;
         }
-        set({ history: pushHistory(state.history, checkpoint) });
+        set({
+          document: pruneUnusedAssets(state.document),
+          history: pushHistory(state.history, checkpoint),
+        });
       },
       cancelTransaction() {
         const state = get();
@@ -439,7 +573,7 @@ export function createEditorStore(initialDocument: ScrawlDocument = createDocume
         commit((current) => reorderDocumentPage(current, pageId, targetIndex));
       },
       removePage(pageId) {
-        commit((current) => removeDocumentPage(current, pageId));
+        commit((current) => pruneUnusedAssets(removeDocumentPage(current, pageId)));
         set(resetSelection());
       },
     };

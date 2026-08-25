@@ -56,6 +56,40 @@ describe('SVG export', () => {
     expect(exportSVG([], { grid: true })).toContain('id="scrawl-grid"');
   });
 
+  it('uses a custom canvas color for the background and connector label chips', () => {
+    const line = createElement('line', {
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 0,
+      label: 'Traffic',
+      points: [
+        { x: 0, y: 0 },
+        { x: 100, y: 0 },
+      ],
+    });
+
+    const svg = exportSVG([line], { canvasColor: '#fff9db' });
+    expect(svg.match(/fill="#fff9db"/g)).toHaveLength(2);
+  });
+
+  it('keeps strokes readable when the canvas color and UI theme have opposite brightness', () => {
+    const rectangle = createElement('rectangle', {
+      x: 0,
+      y: 0,
+      width: 80,
+      height: 40,
+      strokeColor: '#2b2a26',
+    });
+
+    expect(exportSVG([rectangle], { theme: 'dark', canvasColor: '#ffffff' })).toContain(
+      'stroke="#2b2a26"',
+    );
+    expect(exportSVG([rectangle], { theme: 'light', canvasColor: '#141319' })).toContain(
+      'stroke="#eceae2"',
+    );
+  });
+
   it('rejects unsafe color values at the SVG boundary', () => {
     const rectangle = createElement('rectangle', {
       x: 0,
@@ -72,5 +106,8 @@ describe('SVG export', () => {
     expect(svg).not.toContain('example.com');
     expect(svg).toContain('stroke="#2b2a26"');
     expect(svg).toContain('fill="none"');
+    expect(exportSVG([], { canvasColor: 'url(https://example.com/tracker)' })).not.toContain(
+      'example.com',
+    );
   });
 });

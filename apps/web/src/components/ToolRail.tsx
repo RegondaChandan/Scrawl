@@ -11,6 +11,7 @@ const tools: Array<{ id: Tool; label: string; key: string; icon: IconName }> = [
   { id: 'arrow', label: 'Arrow', key: 'A', icon: 'arrow' },
   { id: 'line', label: 'Line', key: 'L', icon: 'line' },
   { id: 'freedraw', label: 'Draw', key: 'P', icon: 'pen' },
+  { id: 'laser', label: 'Laser pointer', key: 'K', icon: 'laser' },
   { id: 'text', label: 'Text', key: 'T', icon: 'text' },
   { id: 'sticky', label: 'Note', key: 'N', icon: 'note' },
   { id: 'eraser', label: 'Erase', key: 'E', icon: 'eraser' },
@@ -20,6 +21,7 @@ export function ToolRail(): React.JSX.Element {
   const tool = useEditor((state) => state.view.tool);
   const openPanel = useEditor((state) => state.view.openPanel);
   const actions = useEditor((state) => state.actions);
+  const libraryOpen = openPanel === 'shapes' || openPanel === 'icons' || openPanel === 'templates';
 
   return (
     <nav aria-label="Canvas tools" className="tool-rail">
@@ -41,11 +43,11 @@ export function ToolRail(): React.JSX.Element {
       <span aria-hidden="true" className="tool-divider" />
       <button
         aria-label="Shape library"
-        aria-pressed={openPanel === 'shapes' || openPanel === 'templates'}
+        aria-pressed={libraryOpen}
         className="tool-button"
-        data-active={openPanel === 'shapes' || openPanel === 'templates' || undefined}
+        data-active={libraryOpen || undefined}
         data-tooltip="Shape library"
-        onClick={() => actions.setOpenPanel(openPanel === 'shapes' ? null : 'shapes')}
+        onClick={() => actions.setOpenPanel(libraryOpen ? null : 'shapes')}
         type="button"
       >
         <Icon name="shapes" />

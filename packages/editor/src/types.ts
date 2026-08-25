@@ -9,6 +9,7 @@ export type Tool =
   | 'arrow'
   | 'line'
   | 'freedraw'
+  | 'laser'
   | 'text'
   | 'sticky'
   | 'eraser';

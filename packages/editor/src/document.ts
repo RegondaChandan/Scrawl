@@ -258,3 +258,17 @@ export function removePage(document: ScrawlDocument, pageId: string): ScrawlDocu
     activePageId: document.activePageId === pageId ? fallback.id : document.activePageId,
   };
 }
+
+export function pruneUnusedAssets(document: ScrawlDocument): ScrawlDocument {
+  const retainedIds = new Set(
+    document.pages.flatMap((page) =>
+      page.elements.flatMap((element) => (element.type === 'image' ? [element.assetId] : [])),
+    ),
+  );
+  const assets = Object.fromEntries(
+    Object.entries(document.assets).filter(([assetId]) => retainedIds.has(assetId)),
+  );
+  return Object.keys(assets).length === Object.keys(document.assets).length
+    ? document
+    : { ...document, assets };
+}

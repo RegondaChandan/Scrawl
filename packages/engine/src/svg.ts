@@ -1,5 +1,6 @@
-import type { AnyElement, Theme } from '@scrawl/schema';
+import type { AnyElement, SketchStyle, Theme } from '@scrawl/schema';
 import {
+  canvasThemeForColor,
   CANVAS_COLORS,
   GRID_COLORS,
   LABEL_FONT_SIZE,
@@ -46,12 +47,23 @@ export function exportSVG(
   elements: AnyElement[],
   opts: {
     theme?: Theme;
+    canvasColor?: string;
+    sketchStyle?: SketchStyle;
     background?: boolean;
     grid?: boolean;
     resolveAsset?: AssetSourceResolver;
   } = {},
 ): string {
-  const { theme = 'light', background = true, grid = false, resolveAsset } = opts;
+  const {
+    theme = 'light',
+    canvasColor = CANVAS_COLORS[theme],
+    sketchStyle = 'pencil',
+    background = true,
+    grid = false,
+    resolveAsset,
+  } = opts;
+  const safeCanvasColor = safeSvgColor(canvasColor, CANVAS_COLORS[theme]);
+  const canvasTheme = canvasThemeForColor(safeCanvasColor, theme);
   const bounds = getSceneBounds(elements);
   const pad = 24;
   const b = bounds ?? { x: 0, y: 0, width: 100, height: 100 };
@@ -63,17 +75,17 @@ export function exportSVG(
   );
   if (background) {
     parts.push(
-      `<rect x="${(b.x - pad).toFixed(2)}" y="${(b.y - pad).toFixed(2)}" width="${w}" height="${h}" fill="${CANVAS_COLORS[theme]}"/>`,
+      `<rect x="${(b.x - pad).toFixed(2)}" y="${(b.y - pad).toFixed(2)}" width="${w}" height="${h}" fill="${safeCanvasColor}"/>`,
     );
   }
   if (grid) {
     parts.push(
-      `<defs><pattern id="scrawl-grid" width="20" height="20" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" fill="${GRID_COLORS[theme]}"/></pattern></defs>`,
+      `<defs><pattern id="scrawl-grid" width="20" height="20" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" fill="${GRID_COLORS[canvasTheme]}"/></pattern></defs>`,
       `<rect x="${(b.x - pad).toFixed(2)}" y="${(b.y - pad).toFixed(2)}" width="${w}" height="${h}" fill="url(#scrawl-grid)"/>`,
     );
   }
   for (const el of elements) {
-    parts.push(elementToSVG(el, theme, resolveAsset));
+    parts.push(elementToSVG(el, canvasTheme, safeCanvasColor, sketchStyle, resolveAsset));
   }
   parts.push('</svg>');
   return parts.join('\n');
@@ -82,6 +94,8 @@ export function exportSVG(
 function elementToSVG(
   el: AnyElement,
   theme: Theme,
+  canvasColor: string,
+  sketchStyle: SketchStyle,
   resolveAsset: AssetSourceResolver | undefined,
 ): string {
   const opacity = el.opacity < 1 ? ` opacity="${el.opacity}"` : '';
@@ -103,12 +117,12 @@ function elementToSVG(
             : el.type === 'image'
               ? imageToSVG(el, resolveAsset)
               : el.renderStyle === 'rough'
-                ? roughToSVG(el, theme)
+                ? roughToSVG(el, theme, sketchStyle)
                 : crispToSVG(el, theme);
-  return `<g transform="translate(${el.x.toFixed(2)} ${el.y.toFixed(2)})${rotation}"${opacity}>${inner}${labelToSVG(el, theme)}</g>`;
+  return `<g transform="translate(${el.x.toFixed(2)} ${el.y.toFixed(2)})${rotation}"${opacity}>${inner}${labelToSVG(el, theme, canvasColor)}</g>`;
 }
 
-function labelToSVG(el: AnyElement, theme: Theme): string {
+function labelToSVG(el: AnyElement, theme: Theme, canvasColor: string): string {
   if (
     !el.label ||
     el.type === 'text' ||
@@ -127,7 +141,7 @@ function labelToSVG(el: AnyElement, theme: Theme): string {
     const lines = el.label.split('\n');
     const chipW = Math.max(...lines.map((l) => l.length)) * fs * 0.62 + 10;
     const chipH = lines.length * lh + 6;
-    const chip = `<rect x="${(mid.x - chipW / 2).toFixed(2)}" y="${(mid.y - chipH / 2).toFixed(2)}" width="${chipW.toFixed(2)}" height="${chipH.toFixed(2)}" fill="${CANVAS_COLORS[theme]}"/>`;
+    const chip = `<rect x="${(mid.x - chipW / 2).toFixed(2)}" y="${(mid.y - chipH / 2).toFixed(2)}" width="${chipW.toFixed(2)}" height="${chipH.toFixed(2)}" fill="${canvasColor}"/>`;
     const spans = lines
       .map(
         (line, i) =>
@@ -146,9 +160,9 @@ function labelToSVG(el: AnyElement, theme: Theme): string {
     .join('');
 }
 
-function roughToSVG(el: AnyElement, theme: Theme): string {
+function roughToSVG(el: AnyElement, theme: Theme, sketchStyle: SketchStyle): string {
   const out: string[] = [];
-  for (const d of getRoughDrawables(el, theme)) {
+  for (const d of getRoughDrawables(el, theme, sketchStyle)) {
     for (const p of roughDrawableToPaths(d)) {
       const stroke = safeSvgColor(p.stroke || 'none', 'none');
       const fill = safeSvgColor(p.fill || 'none', 'none');

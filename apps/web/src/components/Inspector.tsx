@@ -7,9 +7,10 @@ import {
   type AnyElement,
   type FontKey,
 } from '@scrawl/schema';
-import { type Alignment } from '@scrawl/editor';
+import { recognizeFreedraw, type Alignment } from '@scrawl/editor';
 import { normalizeAngle } from '@scrawl/engine';
 import { useSelectionProperties } from '../use-selection-properties';
+import { CanvasColorPicker } from './CanvasColorPicker';
 import { Layers } from './Layers';
 
 const ALIGNMENT_LABELS: Record<Alignment, string> = {
@@ -80,6 +81,7 @@ function RotationField({ angle, onCommit }: RotationFieldProps): React.JSX.Eleme
 }
 
 export function Inspector(): React.JSX.Element {
+  const [recognitionMessage, setRecognitionMessage] = useState('');
   const {
     actions,
     alignedTextTargets,
@@ -100,6 +102,21 @@ export function Inspector(): React.JSX.Element {
     typographyTargets,
     value,
   } = useSelectionProperties();
+  const currentRenderStyle = representative?.renderStyle ?? document.settings.mode;
+
+  const recognizeSelection = (): void => {
+    if (!representative || representative.type !== 'freedraw') return;
+    const recognized = recognizeFreedraw(representative);
+    if (!recognized) {
+      setRecognitionMessage('Try a cleaner outline or straighter stroke.');
+      return;
+    }
+    actions.updateElements([representative.id], () => recognized);
+    setRecognitionMessage(
+      `Converted to ${recognized.type === 'shape' ? recognized.shapeKind : recognized.type}.`,
+    );
+  };
+
   return (
     <aside className="inspector" aria-label="Style inspector">
       <div className="inspector-heading">
@@ -110,13 +127,14 @@ export function Inspector(): React.JSX.Element {
       </div>
 
       <section className="inspector-section">
-        <label>Rendering</label>
+        <div className="inspector-label-row">
+          <label>Rendering</label>
+          <kbd title="Toggle precise and sketch rendering">M</kbd>
+        </div>
         <div className="segment-control">
           {(['crisp', 'rough'] as const).map((mode) => (
             <button
-              data-active={
-                (representative?.renderStyle ?? document.settings.mode) === mode || undefined
-              }
+              data-active={currentRenderStyle === mode || undefined}
               key={mode}
               onClick={() => applyRenderStyle(mode)}
               type="button"
@@ -125,7 +143,32 @@ export function Inspector(): React.JSX.Element {
             </button>
           ))}
         </div>
+        {currentRenderStyle === 'rough' ? (
+          <div aria-label="Sketch texture" className="segment-control texture-control" role="group">
+            {(['pencil', 'marker'] as const).map((texture) => (
+              <button
+                data-active={document.settings.sketchStyle === texture || undefined}
+                key={texture}
+                onClick={() => actions.updateSettings({ sketchStyle: texture })}
+                title={texture === 'pencil' ? 'Calm, lighter strokes' : 'Bolder, organic strokes'}
+                type="button"
+              >
+                {texture === 'pencil' ? 'Pencil' : 'Marker'}
+              </button>
+            ))}
+          </div>
+        ) : null}
       </section>
+
+      {selected.length === 1 && representative?.type === 'freedraw' && !representative.locked ? (
+        <section className="inspector-section recognition-section">
+          <label>Shape recognition</label>
+          <button className="recognition-button" onClick={recognizeSelection} type="button">
+            Recognize stroke
+          </button>
+          {recognitionMessage ? <p role="status">{recognitionMessage}</p> : null}
+        </section>
+      ) : null}
 
       <section className="inspector-section">
         <label>Stroke</label>
@@ -370,6 +413,11 @@ export function Inspector(): React.JSX.Element {
           </div>
         </section>
       ) : null}
+
+      <section className="inspector-section canvas-color-section">
+        <label>Canvas background</label>
+        <CanvasColorPicker />
+      </section>
 
       <Layers />
 

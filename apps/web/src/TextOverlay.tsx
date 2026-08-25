@@ -10,6 +10,7 @@ import {
 import {
   LABEL_FONT_SIZE,
   LINE_HEIGHT,
+  canvasThemeForColor,
   isLabelable,
   resolveFont,
   themedColor,
@@ -116,6 +117,7 @@ export function TextOverlay(): React.JSX.Element | null {
   const actions = useEditor((state) => state.actions);
   const elements = getActivePage(document).elements;
   const element = elements.find((candidate) => candidate.id === editingId);
+  const canvasTheme = canvasThemeForColor(document.settings.canvasColor, document.settings.theme);
   const [value, setValue] = useState(() => (element ? editableValue(element) : ''));
 
   useEffect(() => {
@@ -135,52 +137,64 @@ export function TextOverlay(): React.JSX.Element | null {
   }, []);
 
   if (!element) return null;
-  const geometry = geometryFor(element);
+  let geometry = geometryFor(element);
   if (!geometry) return null;
+  if (element.type === 'text' && value !== element.text) {
+    const size = measureTextSize(
+      value || ' ',
+      element.fontSize,
+      element.renderStyle,
+      element.fontFamily,
+    );
+    geometry = {
+      ...geometry,
+      width: Math.max(80, size.width),
+      height: Math.max(element.fontSize * LINE_HEIGHT, size.height),
+    };
+  }
   const topLeft = worldToScreen(camera, geometry.x, geometry.y);
   const isFreeText = element.type === 'text';
-  const center = getElementCenter(element);
+  const center = isFreeText
+    ? { x: geometry.x + geometry.width / 2, y: geometry.y + geometry.height / 2 }
+    : getElementCenter(element);
 
-  const preview = (nextValue: string): void => {
-    setValue(nextValue);
+  const commitValue = (): void => {
     actions.previewElements(
       elements.map((candidate) => {
         if (candidate.id !== element.id) return candidate;
         if (candidate.type === 'text') {
           const size = measureTextSize(
-            nextValue || ' ',
+            value || ' ',
             candidate.fontSize,
             candidate.renderStyle,
             candidate.fontFamily,
           );
           return {
             ...candidate,
-            text: nextValue,
+            text: value,
             width: Math.max(24, size.width),
             height: Math.max(candidate.fontSize * LINE_HEIGHT, size.height),
             version: candidate.version + 1,
           };
         }
         if (candidate.type === 'sticky') {
-          return { ...candidate, text: nextValue, version: candidate.version + 1 };
+          return { ...candidate, text: value, version: candidate.version + 1 };
         }
-        return { ...candidate, label: nextValue, version: candidate.version + 1 };
+        return { ...candidate, label: value, version: candidate.version + 1 };
       }),
     );
   };
 
-  const finish = (commit: boolean): void => {
+  const finish = (): void => {
     if (finishedRef.current) return;
     finishedRef.current = true;
-    if (!commit) {
-      actions.cancelTransaction();
-    } else if ((element.type === 'text' || element.type === 'sticky') && value.trim() === '') {
+    if ((element.type === 'text' || element.type === 'sticky') && value.trim() === '') {
       actions.previewElements(elements.filter((candidate) => candidate.id !== element.id));
-      actions.commitTransaction();
       actions.select([]);
     } else {
-      actions.commitTransaction();
+      commitValue();
     }
+    actions.commitTransaction();
     actions.setEditingId(null);
   };
 
@@ -188,16 +202,16 @@ export function TextOverlay(): React.JSX.Element | null {
     <textarea
       aria-label={element.type === 'text' || element.type === 'sticky' ? 'Edit text' : 'Edit label'}
       className="text-overlay"
-      onBlur={() => finish(true)}
-      onChange={(event) => preview(event.currentTarget.value)}
+      onBlur={finish}
+      onChange={(event) => setValue(event.currentTarget.value)}
       onKeyDown={(event) => {
         event.stopPropagation();
         if (event.key === 'Escape') {
           event.preventDefault();
-          finish(false);
+          finish();
         } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
           event.preventDefault();
-          finish(true);
+          finish();
         }
       }}
       onPointerDown={(event) => event.stopPropagation()}
@@ -209,7 +223,7 @@ export function TextOverlay(): React.JSX.Element | null {
         width: geometry.width * camera.zoom + (isFreeText ? FREE_TEXT_EDITOR_EXTRA_WIDTH : 0),
         height: geometry.height * camera.zoom + (isFreeText ? FREE_TEXT_EDITOR_EXTRA_HEIGHT : 0),
         padding: geometry.padding * camera.zoom,
-        color: themedColor(geometry.color, document.settings.theme),
+        color: themedColor(geometry.color, canvasTheme),
         fontFamily: geometry.fontFamily,
         fontSize: geometry.fontSize * camera.zoom,
         lineHeight: LINE_HEIGHT,

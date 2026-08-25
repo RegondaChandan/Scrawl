@@ -17,7 +17,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint .",
-    "test": "pnpm -r --if-present test",
+    "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
     "test:performance": "vitest run packages/engine/test/performance.test.ts packages/editor/test/performance.test.ts",

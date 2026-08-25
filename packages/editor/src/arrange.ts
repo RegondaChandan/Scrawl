@@ -9,6 +9,7 @@ import {
   type Binding,
   type Box,
   type Point,
+  type ScrawlAsset,
 } from '@scrawl/schema';
 
 export type Alignment = 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom';
@@ -265,30 +266,76 @@ export function nudgeElements(
   return updateBoundConnectors(moved, new Set(selectedIds));
 }
 
-export function serializeClipboardElements(elements: AnyElement[]): string {
-  return JSON.stringify({ type: 'scrawl/clipboard', version: 1, elements });
+export interface ScrawlClipboardPayload {
+  elements: AnyElement[];
+  assets: Record<string, ScrawlAsset>;
 }
 
-export const MAX_SCRAWL_CLIPBOARD_BYTES = 5 * 1024 * 1024;
+export type ScrawlClipboardParseResult =
+  | { kind: 'scrawl'; payload: ScrawlClipboardPayload }
+  | { kind: 'invalid-scrawl' }
+  | { kind: 'text' };
 
-export function parseClipboardElements(value: string): AnyElement[] | null {
+export const MAX_SCRAWL_CLIPBOARD_BYTES = 48 * 1024 * 1024;
+
+function clipboardElements(elements: AnyElement[]): AnyElement[] {
+  const includedIds = new Set(elements.map((element) => element.id));
+  return elements.map((element) => {
+    if (!isLinear(element)) return element;
+    return {
+      ...element,
+      startBinding:
+        element.startBinding && includedIds.has(element.startBinding.elementId)
+          ? element.startBinding
+          : null,
+      endBinding:
+        element.endBinding && includedIds.has(element.endBinding.elementId)
+          ? element.endBinding
+          : null,
+    };
+  });
+}
+
+export function serializeClipboardElements(
+  elements: AnyElement[],
+  documentAssets: Readonly<Record<string, ScrawlAsset>> = {},
+): string {
+  const assetIds = new Set(
+    elements.flatMap((element) => (element.type === 'image' ? [element.assetId] : [])),
+  );
+  const assets = Object.fromEntries(
+    [...assetIds]
+      .map((assetId) => documentAssets[assetId])
+      .filter((asset): asset is ScrawlAsset => Boolean(asset))
+      .map((asset) => [asset.id, asset] as const),
+  );
+  return JSON.stringify({
+    type: 'scrawl/clipboard',
+    version: 2,
+    elements: clipboardElements(elements),
+    assets,
+  });
+}
+
+export function parseClipboardContent(value: string): ScrawlClipboardParseResult {
+  const looksLikeScrawlClipboard = /"type"\s*:\s*"scrawl\/clipboard"/.test(value);
   try {
     if (
       value.length > MAX_SCRAWL_CLIPBOARD_BYTES ||
       new TextEncoder().encode(value).byteLength > MAX_SCRAWL_CLIPBOARD_BYTES
     ) {
-      return null;
+      return looksLikeScrawlClipboard ? { kind: 'invalid-scrawl' } : { kind: 'text' };
     }
     const parsed: unknown = JSON.parse(value);
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
-    const record = parsed as Record<string, unknown>;
-    if (
-      record.type !== 'scrawl/clipboard' ||
-      record.version !== 1 ||
-      !Array.isArray(record.elements)
-    ) {
-      return null;
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      return { kind: 'text' };
     }
+    const record = parsed as Record<string, unknown>;
+    if (record.type !== 'scrawl/clipboard') return { kind: 'text' };
+    if ((record.version !== 1 && record.version !== 2) || !Array.isArray(record.elements)) {
+      return { kind: 'invalid-scrawl' };
+    }
+    const assets = record.version === 2 ? record.assets : {};
     const document = createDocument('Clipboard');
     const page = document.pages[0]!;
     const elements = record.elements.map((element) =>
@@ -296,11 +343,24 @@ export function parseClipboardElements(value: string): AnyElement[] | null {
         ? { ...(element as Record<string, unknown>), layerId: page.layers[0]!.id }
         : element,
     );
-    return parseDocument({
+    const validated = parseDocument({
       ...document,
+      assets,
       pages: [{ ...page, elements }],
-    }).pages[0]!.elements;
+    });
+    return {
+      kind: 'scrawl',
+      payload: {
+        elements: validated.pages[0]!.elements,
+        assets: validated.assets,
+      },
+    };
   } catch {
-    return null;
+    return looksLikeScrawlClipboard ? { kind: 'invalid-scrawl' } : { kind: 'text' };
   }
+}
+
+export function parseClipboardElements(value: string): AnyElement[] | null {
+  const result = parseClipboardContent(value);
+  return result.kind === 'scrawl' ? result.payload.elements : null;
 }

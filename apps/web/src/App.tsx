@@ -1,4 +1,5 @@
 import { CanvasBoard } from './CanvasBoard';
+import { CanvasBackgroundControl } from './components/CanvasBackgroundControl';
 import { CommandPalette } from './components/CommandPalette';
 import { ExportDialog } from './components/ExportDialog';
 import { Inspector } from './components/Inspector';
@@ -22,6 +23,7 @@ export function App(): React.JSX.Element {
         <CanvasBoard />
         <LibraryPanel />
         {propertyEditorMode === 'panel' ? <Inspector /> : null}
+        {propertyEditorMode === 'radial' ? <CanvasBackgroundControl /> : null}
         <PropertyEditorModeSwitch />
         <PageTabs />
       </div>

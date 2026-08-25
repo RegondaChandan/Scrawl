@@ -54,13 +54,7 @@ export function useSelectionProperties() {
   };
 
   const applyRenderStyle = (mode: 'crisp' | 'rough'): void => {
-    actions.updateSettings({ mode });
-    if (selected.length === 0) return;
-    actions.updateElements(selectedIds, (element) => ({
-      ...element,
-      renderStyle: mode,
-      version: element.version + 1,
-    }));
+    actions.setRenderMode(mode);
   };
 
   const applyRouting = (routing: 'straight' | 'elbow'): void => {

@@ -1,7 +1,7 @@
 import rough from 'roughjs/bin/rough';
 import type { Drawable, Options } from 'roughjs/bin/core';
 import type { RoughCanvas } from 'roughjs/bin/canvas';
-import type { AnyElement, StickyElement, Theme } from '@scrawl/schema';
+import type { AnyElement, SketchStyle, StickyElement, Theme } from '@scrawl/schema';
 import { resolveFont, hasPoints, themedColor } from '@scrawl/schema';
 import type { RenderOpts } from './renderer';
 import { BaseRenderer } from './renderer';
@@ -26,7 +26,7 @@ function roughCanvasFor(canvas: HTMLCanvasElement): RoughCanvas {
  */
 const drawableCache = new Map<string, { key: string; ds: Drawable[] }>();
 
-function shapeKey(el: AnyElement, theme: Theme): string {
+function shapeKey(el: AnyElement, theme: Theme, sketchStyle: SketchStyle): string {
   let pts = '';
   if (hasPoints(el)) {
     const last = el.points[el.points.length - 1] ?? { x: 0, y: 0 };
@@ -47,7 +47,7 @@ function shapeKey(el: AnyElement, theme: Theme): string {
     corner,
     pts,
     theme,
-    currentSketch,
+    sketchStyle,
   ].join('|');
 }
 
@@ -55,10 +55,8 @@ function shapeKey(el: AnyElement, theme: Theme): string {
  * Scrawl's sketch signatures — the values fed to rough.js that give our
  * hand-drawn strokes their character. Element roughness (the user's
  * "sloppiness") and fillStyle stay user-controlled; a signature shapes
- * everything else. The board picks one (see `setSketchStyle`).
+ * everything else. The document selects one and passes it through each render.
  */
-export type SketchStyle = 'pencil' | 'marker';
-
 interface SketchSignature {
   roughnessScale: number; // multiplies the element's roughness
   bowing: number; // how much straight edges bow between endpoints
@@ -86,20 +84,8 @@ const SKETCH_PRESETS: Record<SketchStyle, SketchSignature> = {
   },
 };
 
-let currentSketch: SketchStyle = 'pencil';
-
-/** Sets the board-level sketch texture. Callers must repaint after; the
- *  drawable cache keys on the active style so shapes regenerate on switch. */
-export function setSketchStyle(style: SketchStyle): void {
-  currentSketch = style;
-}
-
-export function getSketchStyle(): SketchStyle {
-  return currentSketch;
-}
-
-function roughOptions(el: AnyElement, theme: Theme): Options {
-  const SKETCH = SKETCH_PRESETS[currentSketch];
+function roughOptions(el: AnyElement, theme: Theme, sketchStyle: SketchStyle): Options {
+  const SKETCH = SKETCH_PRESETS[sketchStyle];
   const opts: Options = {
     seed: el.seed || 1,
     roughness: el.roughness * SKETCH.roughnessScale,
@@ -125,12 +111,16 @@ function roughOptions(el: AnyElement, theme: Theme): Options {
   return opts;
 }
 
-export function getRoughDrawables(el: AnyElement, theme: Theme): Drawable[] {
-  const key = shapeKey(el, theme);
+export function getRoughDrawables(
+  el: AnyElement,
+  theme: Theme,
+  sketchStyle: SketchStyle = 'pencil',
+): Drawable[] {
+  const key = shapeKey(el, theme, sketchStyle);
   const cached = drawableCache.get(el.id);
   if (cached && cached.key === key) return cached.ds;
 
-  const o = roughOptions(el, theme);
+  const o = roughOptions(el, theme, sketchStyle);
   const ds: Drawable[] = [];
   switch (el.type) {
     case 'rectangle': {
@@ -260,7 +250,7 @@ export class RoughRenderer extends BaseRenderer {
     shadow: boolean,
   ): void {
     const rc = roughCanvasFor(ctx.canvas);
-    const ds = getRoughDrawables(el, opts.theme);
+    const ds = getRoughDrawables(el, opts.theme, opts.sketchStyle);
     ctx.save();
     ctx.translate(el.x, el.y);
     if (shadow) {

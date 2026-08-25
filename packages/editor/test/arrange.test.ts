@@ -8,6 +8,7 @@ import {
   groupElements,
   nudgeElements,
   MAX_SCRAWL_CLIPBOARD_BYTES,
+  parseClipboardContent,
   parseClipboardElements,
   reorderElements,
   serializeClipboardElements,
@@ -110,5 +111,48 @@ describe('selection arrangement', () => {
 
   it('rejects clipboard payloads before parsing when they exceed the byte limit', () => {
     expect(parseClipboardElements(' '.repeat(MAX_SCRAWL_CLIPBOARD_BYTES + 1))).toBeNull();
+  });
+
+  it('copies image assets and clears connector bindings outside the copied selection', () => {
+    const image = createElement('image', {
+      id: 'image',
+      x: 0,
+      y: 0,
+      width: 20,
+      height: 20,
+      naturalWidth: 20,
+      naturalHeight: 20,
+      assetId: 'asset',
+    });
+    const arrow = createElement('arrow', {
+      id: 'arrow',
+      x: 30,
+      y: 0,
+      points: [
+        { x: 0, y: 0 },
+        { x: 50, y: 0 },
+      ],
+      startBinding: { elementId: 'not-copied' },
+    });
+    const asset = {
+      id: 'asset',
+      mimeType: 'image/png',
+      size: 3,
+      data: 'data:image/png;base64,YWJj',
+    };
+
+    const parsed = parseClipboardContent(serializeClipboardElements([image, arrow], { asset }));
+
+    expect(parsed.kind).toBe('scrawl');
+    if (parsed.kind !== 'scrawl') throw new Error('Expected Scrawl clipboard content');
+    expect(parsed.payload.assets.asset).toEqual(asset);
+    expect(parsed.payload.elements[1]).toMatchObject({ startBinding: null });
+  });
+
+  it('distinguishes damaged Scrawl clipboard data from ordinary text', () => {
+    expect(parseClipboardContent('{"type":"scrawl/clipboard","version":2}')).toEqual({
+      kind: 'invalid-scrawl',
+    });
+    expect(parseClipboardContent('ordinary clipboard text')).toEqual({ kind: 'text' });
   });
 });

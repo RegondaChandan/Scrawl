@@ -7,6 +7,7 @@ export type IconName =
   | 'eraser'
   | 'hand'
   | 'line'
+  | 'laser'
   | 'moon'
   | 'mouse'
   | 'note'
@@ -33,6 +34,13 @@ const paths: Record<IconName, React.ReactNode> = {
     <path d="M7 11V7a1.5 1.5 0 0 1 3 0v3-5a1.5 1.5 0 0 1 3 0v5-4a1.5 1.5 0 0 1 3 0v5-2a1.5 1.5 0 0 1 3 0v5c0 5-3 7-7 7-3 0-5-2-6-4l-2-4a1.5 1.5 0 0 1 3-2Z" />
   ),
   line: <path d="m5 19 14-14" />,
+  laser: (
+    <>
+      <path d="m5 19 9-9" />
+      <path d="M15 3v3m6 3h-3m1.2-4.2-2.1 2.1" />
+      <circle cx="8" cy="16" r="2.25" />
+    </>
+  ),
   moon: <path d="M20 15.5A8 8 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5Z" />,
   mouse: <path d="m4 3 8 18 2-7 7-2L4 3Z" />,
   note: <path d="M5 3h14v18H5V3Zm3 5h8M8 12h6" />,

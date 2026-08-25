@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { SHAPE_LIBRARY, shapePath, type LibraryItem } from '@scrawl/engine';
+import {
+  CLOUD_ICONS,
+  CLOUD_PROVIDERS,
+  iconDataUri,
+  SHAPE_LIBRARY,
+  shapePath,
+  type IconDef,
+  type LibraryItem,
+} from '@scrawl/engine';
 import { BUILT_IN_TEMPLATES, getActivePage } from '@scrawl/editor';
 import { IndexedDbTemplateRepository, type StoredTemplate } from '@scrawl/storage';
+import { writeCanvasLibraryTransfer } from '../canvas-transfer';
 import { useEditor } from '../use-editor';
 import { useLibraryInsertion } from '../use-library-insertion';
 import { Icon } from './Icon';
@@ -32,18 +41,27 @@ function matchesShape(item: LibraryItem, query: string, packName: string): boole
     .every((term) => text.includes(term));
 }
 
+function matchesIcon(icon: IconDef, query: string): boolean {
+  if (!query) return true;
+  const text = [icon.name, icon.provider, icon.category, ...icon.keywords].join(' ').toLowerCase();
+  return query
+    .toLowerCase()
+    .split(/\s+/)
+    .every((term) => text.includes(term));
+}
+
 export function LibraryPanel(): React.JSX.Element | null {
   const openPanel = useEditor((state) => state.view.openPanel);
   const document = useEditor((state) => state.document);
   const actions = useEditor((state) => state.actions);
-  const { insertShape, insertTemplate } = useLibraryInsertion();
+  const { insertIcon, insertShape, insertTemplate } = useLibraryInsertion();
   const [repository] = useState(() => new IndexedDbTemplateRepository());
   const [query, setQuery] = useState('');
   const [templates, setTemplates] = useState<StoredTemplate[]>([]);
   const [templateName, setTemplateName] = useState('');
   const [status, setStatus] = useState('');
   const previousFocus = useRef<HTMLElement | null>(null);
-  const visible = openPanel === 'shapes' || openPanel === 'templates';
+  const visible = openPanel === 'shapes' || openPanel === 'icons' || openPanel === 'templates';
   const activePage = getActivePage(document);
 
   const loadTemplates = useCallback((): void => {
@@ -74,6 +92,16 @@ export function LibraryPanel(): React.JSX.Element | null {
         ...pack,
         items: pack.items.filter((item) => matchesShape(item, query, pack.name)),
       })).filter((pack) => pack.items.length > 0),
+    [query],
+  );
+  const filteredIconProviders = useMemo(
+    () =>
+      CLOUD_PROVIDERS.map((provider) => ({
+        ...provider,
+        icons: CLOUD_ICONS.filter(
+          (icon) => icon.provider === provider.id && matchesIcon(icon, query),
+        ),
+      })).filter((provider) => provider.icons.length > 0),
     [query],
   );
 
@@ -118,6 +146,14 @@ export function LibraryPanel(): React.JSX.Element | null {
             Shapes
           </button>
           <button
+            aria-selected={openPanel === 'icons'}
+            onClick={() => actions.setOpenPanel('icons')}
+            role="tab"
+            type="button"
+          >
+            Icons
+          </button>
+          <button
             aria-selected={openPanel === 'templates'}
             onClick={() => actions.setOpenPanel('templates')}
             role="tab"
@@ -136,37 +172,84 @@ export function LibraryPanel(): React.JSX.Element | null {
         </button>
       </div>
 
-      {openPanel === 'shapes' ? (
+      {openPanel === 'shapes' || openPanel === 'icons' ? (
         <>
           <label className="library-search">
             <Icon name="search" size={16} />
-            <span className="sr-only">Search shapes</span>
+            <span className="sr-only">
+              {openPanel === 'icons' ? 'Search cloud icons' : 'Search shapes'}
+            </span>
             <input
               autoFocus
               onChange={(event) => setQuery(event.currentTarget.value)}
-              placeholder="Search shapes"
+              placeholder={openPanel === 'icons' ? 'Search cloud icons' : 'Search shapes'}
               type="search"
               value={query}
             />
           </label>
-          <div className="library-scroll">
-            {filteredPacks.map((pack) => (
-              <section className="library-pack" key={pack.id}>
-                <h2>{pack.name}</h2>
-                <div className="library-shape-grid">
-                  {pack.items.map((item) => (
-                    <button key={item.id} onClick={() => insertShape(item)} type="button">
-                      <ShapePreview item={item} />
-                      <span>{item.label}</span>
-                    </button>
-                  ))}
-                </div>
-              </section>
-            ))}
-            {filteredPacks.length === 0 ? (
-              <p className="library-empty">No shapes match “{query}”.</p>
-            ) : null}
-          </div>
+          {openPanel === 'shapes' ? (
+            <div className="library-scroll">
+              {filteredPacks.map((pack) => (
+                <section className="library-pack" key={pack.id}>
+                  <h2>{pack.name}</h2>
+                  <div className="library-shape-grid">
+                    {pack.items.map((item) => (
+                      <button
+                        draggable
+                        key={item.id}
+                        onClick={() => insertShape(item)}
+                        onDragStart={(event) =>
+                          writeCanvasLibraryTransfer(event.dataTransfer, {
+                            kind: 'shape',
+                            id: item.id,
+                          })
+                        }
+                        title="Click to insert in the center, or drag onto the canvas"
+                        type="button"
+                      >
+                        <ShapePreview item={item} />
+                        <span>{item.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              ))}
+              {filteredPacks.length === 0 ? (
+                <p className="library-empty">No shapes match “{query}”.</p>
+              ) : null}
+            </div>
+          ) : (
+            <div className="library-scroll">
+              {filteredIconProviders.map((provider) => (
+                <section className="library-pack" key={provider.id}>
+                  <h2>{provider.name}</h2>
+                  <div className="library-shape-grid library-icon-grid">
+                    {provider.icons.map((icon) => (
+                      <button
+                        draggable
+                        key={icon.id}
+                        onClick={() => insertIcon(icon)}
+                        onDragStart={(event) =>
+                          writeCanvasLibraryTransfer(event.dataTransfer, {
+                            kind: 'icon',
+                            id: icon.id,
+                          })
+                        }
+                        title="Click to insert in the center, or drag onto the canvas"
+                        type="button"
+                      >
+                        <img alt="" draggable="false" src={iconDataUri(icon.id)} />
+                        <span>{icon.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              ))}
+              {filteredIconProviders.length === 0 ? (
+                <p className="library-empty">No cloud icons match “{query}”.</p>
+              ) : null}
+            </div>
+          )}
         </>
       ) : (
         <div className="library-scroll template-list">

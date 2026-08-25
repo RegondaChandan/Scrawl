@@ -14,12 +14,14 @@ interface UiPreferences {
   setPropertyEditorMode: (mode: PropertyEditorMode) => void;
 }
 
-const STORAGE_KEY = 'scrawl.property-editor-mode';
+const PROPERTY_EDITOR_STORAGE_KEY = 'scrawl.property-editor-mode';
 const UiPreferencesContext = createContext<UiPreferences | null>(null);
 
 function readPropertyEditorMode(): PropertyEditorMode {
   try {
-    return window.localStorage.getItem(STORAGE_KEY) === 'radial' ? 'radial' : 'panel';
+    return window.localStorage.getItem(PROPERTY_EDITOR_STORAGE_KEY) === 'radial'
+      ? 'radial'
+      : 'panel';
   } catch {
     return 'panel';
   }
@@ -31,7 +33,7 @@ export function UiPreferencesProvider({ children }: PropsWithChildren): React.JS
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(STORAGE_KEY, propertyEditorMode);
+      window.localStorage.setItem(PROPERTY_EDITOR_STORAGE_KEY, propertyEditorMode);
     } catch {
       // The selected mode still applies for this session when storage is unavailable.
     }
